@@ -1,50 +1,108 @@
 {
-  "model_name": "mha_transformer",
-  "architecture": "encoder_decoder",
+  "model_name": "gptneo_tinystories",
+  "architecture": "gpt_neo_decoder",
+  "description": "GPTNeo decoder-only transformer for TinyStories dataset with A100 optimization",
 
-  "model_config": {
-    "d_model": 512,
-    "num_heads": 8,
-    "num_encoder_layers": 6,
-    "num_decoder_layers": 6,
-    "d_ff": 2048,
-    "dropout": 0.1,
-    "max_seq_length": 512,
-    "vocab_size": 50257
+  "model": {
+    "vocab_size": 50257,
+    "hidden_size": 768,
+    "num_layers": 8,
+    "num_heads": 12,
+    "intermediate_size": 3072,
+    "max_position_embeddings": 512,
+    "dropout": 0.2,
+    "activation": "gelu",
+    "layer_norm_epsilon": 1e-5,
+    "initializer_range": 0.02,
+    "tie_word_embeddings": true
   },
 
-  "positional_encoding": {
-    "type": "sinusoidal",
-    "max_len": 5000
-  },
-
-  "training_config": {
-    "batch_size": 32,
-    "learning_rate": 0.0001,
-    "num_epochs": 20,
-    "warmup_steps": 4000,
+  "training": {
+    "dataset": "tinystories",
+    "train_samples": 100000,
+    "val_samples": 5000,
+    "batch_size": 128,
+    "gradient_accumulation_steps": 1,
+    "effective_batch_size": 128,
+    "max_steps": 25000,
+    "warmup_steps": 500,
+    "learning_rate": 0.001,
+    "min_learning_rate": 1e-5,
+    "lr_scheduler": "cosine",
+    "weight_decay": 0.01,
     "gradient_clip": 1.0,
-    "label_smoothing": 0.1,
-    "optimizer": "adam",
-    "adam_betas": [0.9, 0.98],
-    "adam_eps": 1e-9
+    "use_bf16": true,
+    "optimizer": "adamw",
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.999,
+    "adam_epsilon": 1e-8,
+    "max_seq_length": 512
   },
 
-  "data_config": {
-    "dataset": "wikitext2",
-    "train_path": "../data_processed/wikitext2_processed/train",
-    "val_path": "../data_processed/wikitext2_processed/validation",
-    "tokenizer": "gpt2"
+  "data": {
+    "tokenizer": "gpt2",
+    "dataset_name": "roneneldan/TinyStories",
+    "dataset_config": "default",
+    "text_column": "text",
+    "streaming": false,
+    "num_workers": 4,
+    "prefetch_factor": 2,
+    "pin_memory": true
   },
 
-  "logging_config": {
-    "log_dir": "../logs/mha",
-    "checkpoint_dir": "../checkpoints/mha",
-    "save_every": 1000,
-    "log_every": 100,
+  "logging": {
+    "log_dir": "../logs/gptneo_tinystories",
+    "checkpoint_dir": "../checkpoints/gptneo_tinystories",
+    "save_every_steps": 1000,
+    "eval_every_steps": 500,
+    "log_every_steps": 50,
     "use_tensorboard": true,
-    "use_wandb": false
+    "use_wandb": false,
+    "project_name": "gptneo-tinystories",
+    "run_name": "gptneo_768_8l_a100"
   },
 
-  "random_seed": 42
+  "evaluation": {
+    "eval_batch_size": 64,
+    "eval_max_steps": 100,
+    "generation_prompts": [
+      "Once upon a time",
+      "One day, a little girl",
+      "In a big forest",
+      "There was a happy dog"
+    ],
+    "generation_max_length": 100,
+    "generation_temperature": 0.8,
+    "generation_top_k": 50,
+    "generation_top_p": 0.95
+  },
+
+  "hardware": {
+    "device": "cuda",
+    "gpu_type": "A100",
+    "mixed_precision": "bf16",
+    "compile_model": false,
+    "ddp": false,
+    "num_gpus": 1
+  },
+
+  "checkpointing": {
+    "save_total_limit": 3,
+    "save_best_only": false,
+    "metric_for_best_model": "eval_loss",
+    "greater_is_better": false,
+    "load_best_model_at_end": true,
+    "resume_from_checkpoint": null
+  },
+
+  "random_seed": 42,
+
+  "notes": {
+    "expected_params": "~85-95M parameters with vocab=50257",
+    "expected_training_time": "~3-4 hours on A100",
+    "expected_train_ppl": "15-20",
+    "expected_val_ppl": "18-25",
+    "dataset_source": "TinyStories paper (Eldan & Li, 2023)",
+    "optimization": "A100 optimized with BFloat16, large batch size, high LR"
+  }
 }

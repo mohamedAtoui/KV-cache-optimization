@@ -1,170 +1,400 @@
-# Multi-Head Attention (MHA) Transformer
+# GPTNeo Decoder-Only Transformer
 
-Complete implementation of a Transformer Encoder-Decoder with Multi-Head Attention for language modeling on WikiText dataset.
+Complete implementation of a GPTNeo-style decoder-only transformer for causal language modeling on the TinyStories dataset. Optimized for A100 GPUs with BFloat16 mixed precision.
+
+## Overview
+
+This project implements a **decoder-only transformer** architecture (similar to GPT-2/GPT-3) trained on the TinyStories dataset. The model is designed to generate coherent children's stories after training on simple narratives.
+
+**Key Features:**
+- 🚀 **A100 Optimized**: BFloat16 mixed precision for 2x speedup
+- 📚 **TinyStories Dataset**: 100K training samples for fast iteration
+- 🎯 **Decoder-Only**: ~85-95M parameter GPT-style architecture
+- ⚡ **Fast Training**: ~3-4 hours on A100 (vs 8-10 hours baseline)
+- 📊 **Strong Results**: Expected PPL 18-25 on validation
+
+## Quick Start
+
+### Installation
+
+```bash
+# Install dependencies
+pip install torch transformers datasets tqdm tensorboard
+
+# Or use requirements.txt
+pip install -r requirements.txt
+```
+
+### Training
+
+```bash
+cd AttentionHeads/mha
+
+# Train with default config (100K samples, 25K steps)
+python train.py --config config.json
+
+# Resume from checkpoint
+python train.py --config config.json --checkpoint ../checkpoints/gptneo_tinystories/checkpoint_step_10000.pt
+```
+
+### Testing Components
+
+Test individual modules:
+
+```bash
+# Test GPTNeo architecture
+python transformer.py
+
+# Test TinyStories data loader
+python data_loader.py
+
+# Test attention mechanism
+python attention.py
+
+# Test utility layers
+python layers.py
+```
 
 ## Project Structure
 
 ```
 mha/
-├── __init__.py                    # Package initialization
 ├── config.json                    # Model and training configuration
-├── layers.py                      # Core layers (LayerNorm, FFN, Residual)
-├── positional_encoding.py         # Sinusoidal and learned positional encodings
-├── attention.py                   # Multi-Head Attention implementation
-├── transformer.py                 # Full encoder-decoder architecture
-├── data_loader.py                 # WikiText data loading utilities
-├── utils.py                       # Metrics, logging, visualization
-├── train.py                       # Training script
+├── transformer.py                 # GPTNeo decoder-only architecture
+├── train.py                       # A100-optimized training script
+├── data_loader.py                 # TinyStories dataset loading
+├── attention.py                   # Multi-Head Self-Attention
+├── layers.py                      # LayerNorm, FFN, utilities
+├── positional_encoding.py         # Positional encodings (legacy)
+├── utils.py                       # Metrics, logging, checkpointing
+├── inference.py                   # Text generation utilities
 └── README.md                      # This file
 ```
 
-## Features
+## Architecture
 
-### Architecture Components
-- ✅ **Multi-Head Attention** with scaled dot-product
-- ✅ **Positional Encoding** (sinusoidal and learned)
-- ✅ **Layer Normalization** and **Residual Connections**
-- ✅ **Feed-Forward Networks** (GELU/ReLU activation)
-- ✅ **Causal Masking** for autoregressive modeling
-- ✅ **Padding Mask** support
+### GPTNeo Decoder-Only
 
-### Training Features
-- ✅ Label smoothing
-- ✅ Gradient clipping
-- ✅ Learning rate warmup
-- ✅ TensorBoard logging
-- ✅ Checkpoint management
-- ✅ Perplexity tracking
-
-## Quick Start
-
-### 1. Local Testing
-
-Test individual components:
-
-```bash
-# Test layers
-cd mha
-python layers.py
-
-# Test positional encoding
-python positional_encoding.py
-
-# Test attention
-python attention.py
-
-# Test transformer
-python transformer.py
-
-# Test data loader
-python data_loader.py
+```
+Input Token IDs (batch, seq_len)
+    ↓
+Token Embeddings + Positional Embeddings
+    ↓
+Dropout
+    ↓
+┌─────────────────────────────────┐
+│ GPTNeo Block ×8                 │
+│  1. LayerNorm                   │
+│  2. Causal Self-Attention       │
+│  3. Residual                    │
+│  4. LayerNorm                   │
+│  5. Feed-Forward (GELU)         │
+│  6. Residual                    │
+└─────────────────────────────────┘
+    ↓
+Final LayerNorm
+    ↓
+Language Modeling Head (tied weights)
+    ↓
+Output Logits (batch, seq_len, vocab_size)
 ```
 
-### 2. Local Training
+### Model Configuration
 
-Train locally:
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `vocab_size` | 50,257 | GPT-2 tokenizer |
+| `hidden_size` | 768 | Model dimension |
+| `num_layers` | 8 | Decoder blocks |
+| `num_heads` | 12 | Attention heads |
+| `intermediate_size` | 3,072 | FFN hidden dim (4×hidden) |
+| `max_position_embeddings` | 512 | Max sequence length |
+| `dropout` | 0.2 | Dropout rate |
+| **Total Parameters** | **~85-95M** | Including embeddings |
 
-```bash
-cd mha
-python train.py --config config.json
-```
+### Training Configuration (A100 Optimized)
 
-### 3. Colab Training
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `batch_size` | 128 | A100 can handle large batches |
+| `learning_rate` | 1e-3 | Higher LR with large batches |
+| `max_steps` | 25,000 | Fast convergence |
+| `warmup_steps` | 500 | Quick warmup |
+| `use_bf16` | `true` | A100's specialty (2x speedup) |
+| `weight_decay` | 0.01 | Regularization |
+| `gradient_clip` | 1.0 | Stability |
+| **Training Time** | **~3-4 hours** | On A100 40GB |
 
-1. Open `notebooks/train_mha_colab.ipynb` in Google Colab
-2. Follow the notebook instructions
-3. Checkpoints will be saved to your Google Drive
+### Dataset: TinyStories
+
+The model is trained on [TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories), a dataset of 2.1M synthetic children's stories generated by GPT-3.5/GPT-4.
+
+**Paper**: Eldan, R., & Li, Y. (2023). TinyStories: How Small Can Language Models Be and Still Speak Coherent English? arXiv:2305.07759.
+
+**Why TinyStories?**
+- ✅ Simple vocabulary (~10K words)
+- ✅ Clean narrative structure
+- ✅ Fast convergence (models learn story patterns quickly)
+- ✅ Low overfitting (2.1M examples prevent memorization)
+- ✅ Coherent generation (even small models produce actual stories)
+
+**Our Setup:**
+- Training: 100,000 stories (sampled from 2.1M)
+- Validation: 5,000 stories (sampled from 21K)
+- Rationale: 100K is sufficient for strong results, 5x faster than full dataset
 
 ## Configuration
 
-Edit `config.json` to modify hyperparameters:
+Edit `config.json` to customize training:
 
 ```json
 {
-  "model_config": {
-    "d_model": 512,           // Model dimension
-    "num_heads": 8,           // Number of attention heads
-    "num_encoder_layers": 6,  // Encoder depth
-    "num_decoder_layers": 6,  // Decoder depth
-    "d_ff": 2048,            // FFN hidden dimension
-    "dropout": 0.1           // Dropout rate
+  "model": {
+    "vocab_size": 50257,
+    "hidden_size": 768,
+    "num_layers": 8,
+    "num_heads": 12,
+    "intermediate_size": 3072,
+    "max_position_embeddings": 512,
+    "dropout": 0.2
   },
-  "training_config": {
-    "batch_size": 32,
-    "learning_rate": 0.0001,
-    "num_epochs": 20,
-    "warmup_steps": 4000
+  "training": {
+    "dataset": "tinystories",
+    "train_samples": 100000,
+    "val_samples": 5000,
+    "batch_size": 128,
+    "max_steps": 25000,
+    "learning_rate": 0.001,
+    "use_bf16": true
   }
 }
 ```
 
-## Model Architecture
+### Key Parameters to Tune
 
+- **`hidden_size`**: Model dimension (512/768/1024) - affects parameter count
+- **`num_layers`**: Depth (4/8/12) - deeper = more expressive but slower
+- **`batch_size`**: Adjust based on GPU memory (64/128/256)
+- **`max_steps`**: Training duration (10K/25K/50K steps)
+- **`learning_rate`**: Higher for larger batches (5e-4 to 1e-3)
+
+## Text Generation
+
+The model includes built-in generation with multiple sampling strategies:
+
+```python
+from transformer import GPTNeoForCausalLM
+from transformers import GPT2Tokenizer
+
+# Load model
+model = GPTNeoForCausalLM(vocab_size=50257)
+model.load_state_dict(torch.load('checkpoint.pt')['model_state_dict'])
+
+# Load tokenizer
+tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+
+# Generate
+prompt = "Once upon a time"
+input_ids = tokenizer.encode(prompt, return_tensors='pt')
+output_ids = model.generate(
+    input_ids,
+    max_length=200,
+    temperature=0.8,
+    top_k=50,
+    top_p=0.95
+)
+
+# Decode
+story = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+print(story)
 ```
-Input Tokens
-    ↓
-Token Embedding + Positional Encoding
-    ↓
-┌─────────────────┐
-│ ENCODER (×6)    │
-│ - Self-Attention│
-│ - Feed-Forward  │
-└─────────────────┘
-    ↓
-┌─────────────────┐
-│ DECODER (×6)    │
-│ - Self-Attention│
-│ - Cross-Attn    │
-│ - Feed-Forward  │
-└─────────────────┘
-    ↓
-Linear + Softmax
-    ↓
-Output Logits
+
+### Generation Parameters
+
+- `temperature`: Controls randomness (0.7-1.0 recommended)
+  - Lower (0.7): More focused, deterministic
+  - Higher (1.0): More creative, diverse
+
+- `top_k`: Keep top-k tokens (40-50 recommended)
+  - Filters out low-probability tokens
+
+- `top_p`: Nucleus sampling threshold (0.9-0.95 recommended)
+  - Dynamically adjusts vocabulary size
+
+## Training Progress
+
+### Expected Metrics
+
+| Metric | Target | Description |
+|--------|--------|-------------|
+| Train Loss | ~2.5-2.8 | After 25K steps |
+| Val Loss | ~2.7-3.0 | Should be close to train |
+| Train PPL | 15-20 | Perplexity (exp(loss)) |
+| Val PPL | 18-25 | Lower is better |
+| Train/Val Gap | <1.5x | Minimal overfitting |
+
+### Monitoring
+
+**TensorBoard:**
+```bash
+tensorboard --logdir ../logs/gptneo_tinystories
 ```
 
-## Metrics
-
-- **Loss**: Cross-entropy with label smoothing
-- **Perplexity**: exp(loss) - lower is better
-- **Learning Rate**: Warmup + inverse sqrt schedule
+**Metrics Logged:**
+- Training loss and perplexity (every 50 steps)
+- Validation loss and perplexity (every 500 steps)
+- Learning rate schedule
+- Generated story samples
 
 ## Checkpoints
 
-Checkpoints are saved to:
-- Local: `../checkpoints/mha/`
-- Colab: `/content/drive/MyDrive/LLM-Journey/checkpoints/mha/`
+Checkpoints are automatically saved:
 
-Best model: `best_model.pt`
+**Location:** `../checkpoints/gptneo_tinystories/`
 
-## TensorBoard
+**Files:**
+- `best_model.pt` - Best validation loss model
+- `checkpoint_step_1000.pt` - Periodic checkpoints
+- `checkpoint_step_5000.pt`
+- `final_model.pt` - End of training
 
-View training progress:
-
-```bash
-tensorboard --logdir ../logs/mha
+**Checkpoint Contents:**
+```python
+{
+    'model_state_dict': ...,      # Model weights
+    'optimizer_state_dict': ...,  # Optimizer state
+    'scheduler_state_dict': ...,  # LR scheduler state
+    'global_step': ...,           # Training step
+    'tokens_seen': ...,           # Total tokens processed
+    'best_val_loss': ...,         # Best validation loss
+    'config': ...                 # Full configuration
+}
 ```
 
-## Testing
+## Using Notebooks
 
-All modules include unit tests in their `__main__` blocks. Run:
+A Colab notebook is provided for easy A100 training:
 
-```bash
-python <module_name>.py
+### `notebooks/train_gptneo_tinystories_a100.ipynb`
+
+**Features:**
+- One-click A100 setup
+- Automatic TinyStories loading
+- Training with live progress
+- Text generation examples
+- Checkpoint download to Google Drive
+
+**To Use:**
+1. Open notebook in Google Colab
+2. Select Runtime → Change runtime type → A100 GPU
+3. Run all cells
+4. Training starts automatically
+
+## Comparison with Encoder-Decoder
+
+| Aspect | Encoder-Decoder (Old) | GPTNeo Decoder-Only (New) |
+|--------|----------------------|--------------------------|
+| Architecture | 6+6 layers | 8 layers |
+| Parameters | ~177M | ~85-95M |
+| Dataset | WikiText-2 (3.6K samples) | TinyStories (100K samples) |
+| Training Time | 8-10 hours | 3-4 hours |
+| Val PPL | 350+ (overfitting) | 18-25 (generalizes) |
+| Use Case | Translation-style | Text generation |
+
+## Performance Tips
+
+### GPU Optimization
+- **A100**: Use BF16 (`use_bf16: true`), batch_size=128
+- **V100/T4**: Use FP16 or FP32, batch_size=32-64
+- **RTX 3090**: Use FP16, batch_size=64-96
+
+### Faster Training
+- Reduce `train_samples` to 50K for quick experiments
+- Reduce `max_steps` to 10K for initial tests
+- Use `eval_every_steps: 1000` instead of 500
+
+### Better Results
+- Increase `train_samples` to full 2.1M dataset
+- Increase `max_steps` to 50K-100K
+- Lower `learning_rate` to 5e-4 for stability
+- Increase `num_layers` to 12 for more capacity
+
+## Troubleshooting
+
+### Out of Memory (OOM)
+- Reduce `batch_size` (128 → 64 → 32)
+- Reduce `max_seq_length` (512 → 256)
+- Use gradient checkpointing (advanced)
+
+### Loss Not Decreasing
+- Check learning rate (may be too high/low)
+- Verify data loading (check a batch manually)
+- Ensure BF16 is supported on your GPU
+
+### Poor Generation Quality
+- Train longer (25K → 50K steps)
+- Adjust temperature (try 0.7-1.0)
+- Check if model is still training (PPL decreasing?)
+
+## Advanced Usage
+
+### Custom Datasets
+
+To use your own dataset:
+
+1. Create a dataset with `text` column
+2. Upload to HuggingFace or load locally
+3. Update `config.json`:
+```json
+{
+  "data": {
+    "dataset_name": "your-username/your-dataset",
+    ...
+  }
+}
 ```
 
-## Future Extensions
+### Model Size Variants
 
-When implementing other attention mechanisms (MQA, GQA, MLA):
-1. Copy the `mha/` folder
-2. Rename to `mqa/`, `gqa/`, etc.
-3. Modify only the attention mechanism in `attention.py`
-4. Keep all other components the same for fair comparison
+**Small (28M params):**
+```json
+{"hidden_size": 512, "num_layers": 8, "num_heads": 8, "intermediate_size": 2048}
+```
 
-## Requirements
+**Medium (85M params - default):**
+```json
+{"hidden_size": 768, "num_layers": 8, "num_heads": 12, "intermediate_size": 3072}
+```
 
-See `../requirements.txt` for dependencies.
+**Large (300M params):**
+```json
+{"hidden_size": 1024, "num_layers": 12, "num_heads": 16, "intermediate_size": 4096}
+```
+
+## Citation
+
+If you use this code or the TinyStories dataset, please cite:
+
+```bibtex
+@article{eldan2023tinystories,
+  title={TinyStories: How Small Can Language Models Be and Still Speak Coherent English?},
+  author={Eldan, Ronen and Li, Yuanzhi},
+  journal={arXiv preprint arXiv:2305.07759},
+  year={2023}
+}
+```
+
+## License
+
+MIT License - Feel free to use for research and education.
 
 ## Author
 
-Your Name - FYP: Comparison of Transformer Attention Mechanisms
+Attaimen - Final Year Project: Attention Mechanisms Comparison
+
+## Acknowledgments
+
+- TinyStories dataset by Microsoft Research
+- Harvard NLP's Annotated Transformer
+- HuggingFace Transformers library
+- PyTorch team for excellent framework

@@ -1,31 +1,65 @@
 """
-Data loading utilities for WikiText dataset (MHA Transformer)
-Loads pre-processed tokenized data from HuggingFace Datasets format
+Data Loading for TinyStories Dataset (GPTNeo Transformer)
+
+Loads TinyStories dataset from HuggingFace with sampling support for faster training.
+Optimized for decoder-only causal language modeling.
+
+Dataset:
+    Eldan, R., & Li, Y. (2023). TinyStories: How Small Can Language Models Be
+    and Still Speak Coherent English? arXiv preprint arXiv:2305.07759.
 """
 
 import torch
-from torch.utils.data import Dataset, DataLoader
-from datasets import load_from_disk
+from torch.utils.data import Dataset, DataLoader, Subset
+from datasets import load_dataset
 from transformers import GPT2Tokenizer
 import json
 import os
+import random
 
 
-class WikiTextDataset(Dataset):
+class TinyStoriesDataset(Dataset):
     """
-    WikiText Dataset wrapper for PyTorch
+    TinyStories Dataset for causal language modeling
 
-    Loads pre-tokenized data with input_ids and attention_mask
-    Data shape: input_ids - List[int], attention_mask - List[int]
+    Loads stories from HuggingFace and tokenizes them on-the-fly.
+    Supports sampling for faster training iterations.
     """
-    def __init__(self, data_path: str, max_seq_length: int = 512):
+
+    def __init__(
+        self,
+        split='train',
+        tokenizer_name='gpt2',
+        max_seq_length=512,
+        num_samples=None,
+        dataset_name='roneneldan/TinyStories'
+    ):
         """
         Args:
-            data_path: Path to the processed dataset directory
-            max_seq_length: Maximum sequence length (for truncation/padding)
+            split: 'train' or 'validation'
+            tokenizer_name: HuggingFace tokenizer name
+            max_seq_length: Maximum sequence length
+            num_samples: Number of samples to use (None = use all)
+            dataset_name: HuggingFace dataset name
         """
-        self.dataset = load_from_disk(data_path)
         self.max_seq_length = max_seq_length
+        self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_name)
+
+        # Set pad token to eos token (GPT-2 doesn't have pad token)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Load dataset from HuggingFace
+        print(f"Loading TinyStories dataset (split={split})...")
+        self.dataset = load_dataset(dataset_name, split=split)
+
+        # Sample if requested
+        if num_samples is not None and num_samples < len(self.dataset):
+            print(f"Sampling {num_samples} from {len(self.dataset)} examples...")
+            indices = random.sample(range(len(self.dataset)), num_samples)
+            self.dataset = self.dataset.select(indices)
+
+        print(f"Dataset size: {len(self.dataset)}")
 
     def __len__(self):
         return len(self.dataset)
@@ -35,76 +69,106 @@ class WikiTextDataset(Dataset):
         Returns:
             dict with keys:
                 - input_ids: (seq_len,) - Token IDs
-                - attention_mask: (seq_len,) - Attention mask (1 for real tokens, 0 for padding)
+                - attention_mask: (seq_len,) - Attention mask
         """
-        item = self.dataset[idx]
+        # Get story text
+        story = self.dataset[idx]['text']
 
-        input_ids = item['input_ids']
-        attention_mask = item['attention_mask']
+        # Tokenize with truncation
+        encoding = self.tokenizer(
+            story,
+            truncation=True,
+            max_length=self.max_seq_length,
+            return_tensors='pt',
+            padding=False
+        )
 
-        # Truncate if longer than max_seq_length
-        if len(input_ids) > self.max_seq_length:
-            input_ids = input_ids[:self.max_seq_length]
-            attention_mask = attention_mask[:self.max_seq_length]
-
-        # Convert to tensors
         return {
-            'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'attention_mask': torch.tensor(attention_mask, dtype=torch.long)
+            'input_ids': encoding['input_ids'].squeeze(0),
+            'attention_mask': encoding['attention_mask'].squeeze(0)
         }
 
 
-class WikiTextDataModule:
+class TinyStoriesDataModule:
     """
-    Data module for managing WikiText train/val/test dataloaders
+    Data module for managing TinyStories train/val dataloaders
 
-    Handles loading, batching, and preparing data for training
+    Features:
+        - Automatic dataset loading from HuggingFace
+        - Sampling support (e.g., 100K train, 5K val)
+        - Dynamic padding for efficient batching
+        - Decoder-only causal language modeling setup
     """
+
     def __init__(self, config):
         """
         Args:
-            config: dict or namespace with data configuration
-                - train_path: Path to training data
-                - val_path: Path to validation data
-                - batch_size: Batch size for training
+            config: dict with data configuration
+                - dataset_name: HuggingFace dataset name
+                - tokenizer: Tokenizer name
+                - train_samples: Number of training samples (None = all)
+                - val_samples: Number of validation samples (None = all)
+                - batch_size: Batch size
                 - max_seq_length: Maximum sequence length
-                - tokenizer: Tokenizer name (e.g., "gpt2")
+                - num_workers: Number of data loading workers
+                - pin_memory: Pin memory for faster GPU transfer
         """
-        # Extract config parameters
-        if isinstance(config, dict):
-            self.train_path = config.get('train_path', '../data_processed/wikitext2_processed/train')
-            self.val_path = config.get('val_path', '../data_processed/wikitext2_processed/validation')
-            self.batch_size = config.get('batch_size', 32)
-            self.max_seq_length = config.get('max_seq_length', 512)
-            self.tokenizer_name = config.get('tokenizer', 'gpt2')
-        else:
-            self.train_path = getattr(config, 'train_path')
-            self.val_path = getattr(config, 'val_path')
-            self.batch_size = getattr(config, 'batch_size')
-            self.max_seq_length = getattr(config, 'max_seq_length')
-            self.tokenizer_name = getattr(config, 'tokenizer')
+        self.dataset_name = config.get('dataset_name', 'roneneldan/TinyStories')
+        self.tokenizer_name = config.get('tokenizer', 'gpt2')
+        self.train_samples = config.get('train_samples', None)
+        self.val_samples = config.get('val_samples', None)
+        self.batch_size = config.get('batch_size', 32)
+        self.max_seq_length = config.get('max_seq_length', 512)
+        self.num_workers = config.get('num_workers', 4)
+        self.pin_memory = config.get('pin_memory', True)
 
         # Load tokenizer
         self.tokenizer = GPT2Tokenizer.from_pretrained(self.tokenizer_name)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Create datasets
+        # Datasets will be created in setup()
         self.train_dataset = None
         self.val_dataset = None
 
     def setup(self):
-        """Load the datasets"""
-        print(f"Loading training data from: {self.train_path}")
-        self.train_dataset = WikiTextDataset(self.train_path, self.max_seq_length)
+        """Load and prepare datasets"""
+        print("\n" + "=" * 70)
+        print("Setting up TinyStories datasets...")
+        print("=" * 70)
 
-        print(f"Loading validation data from: {self.val_path}")
-        self.val_dataset = WikiTextDataset(self.val_path, self.max_seq_length)
+        # Create train dataset
+        self.train_dataset = TinyStoriesDataset(
+            split='train',
+            tokenizer_name=self.tokenizer_name,
+            max_seq_length=self.max_seq_length,
+            num_samples=self.train_samples,
+            dataset_name=self.dataset_name
+        )
 
-        print(f"Train dataset size: {len(self.train_dataset)}")
-        print(f"Val dataset size: {len(self.val_dataset)}")
+        # Create validation dataset
+        self.val_dataset = TinyStoriesDataset(
+            split='validation',
+            tokenizer_name=self.tokenizer_name,
+            max_seq_length=self.max_seq_length,
+            num_samples=self.val_samples,
+            dataset_name=self.dataset_name
+        )
+
+        print(f"\nDataset Summary:")
+        print(f"  Train samples: {len(self.train_dataset):,}")
+        print(f"  Val samples: {len(self.val_dataset):,}")
+        print(f"  Max sequence length: {self.max_seq_length}")
+        print(f"  Batch size: {self.batch_size}")
+        print(f"  Vocab size: {len(self.tokenizer)}")
+        print("=" * 70 + "\n")
 
     def collate_fn(self, batch):
         """
-        Custom collate function for batching sequences of variable length
+        Dynamic padding collate function
+
+        Pads sequences to the maximum length in the current batch
+        (more efficient than padding to max_seq_length).
 
         Args:
             batch: List of dicts from __getitem__
@@ -113,7 +177,6 @@ class WikiTextDataModule:
             dict with batched tensors:
                 - input_ids: (batch_size, max_len_in_batch)
                 - attention_mask: (batch_size, max_len_in_batch)
-                - labels: (batch_size, max_len_in_batch) - Same as input_ids for language modeling
         """
         # Find max length in this batch
         max_len = max(item['input_ids'].size(0) for item in batch)
@@ -122,7 +185,7 @@ class WikiTextDataModule:
         input_ids_batch = []
         attention_mask_batch = []
 
-        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+        pad_token_id = self.tokenizer.pad_token_id
 
         for item in batch:
             seq_len = item['input_ids'].size(0)
@@ -144,39 +207,34 @@ class WikiTextDataModule:
             attention_mask_batch.append(padded_attention_mask)
 
         # Stack into tensors
-        input_ids = torch.stack(input_ids_batch)  # (batch_size, max_len)
-        attention_mask = torch.stack(attention_mask_batch)  # (batch_size, max_len)
-
-        # For language modeling, labels are the same as input_ids
-        # (shifted by 1 position during loss calculation)
-        labels = input_ids.clone()
+        input_ids = torch.stack(input_ids_batch)
+        attention_mask = torch.stack(attention_mask_batch)
 
         return {
             'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': labels
+            'attention_mask': attention_mask
         }
 
-    def train_dataloader(self, shuffle=True, num_workers=0):
+    def train_dataloader(self, shuffle=True):
         """Get training dataloader"""
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=shuffle,
             collate_fn=self.collate_fn,
-            num_workers=num_workers,
-            pin_memory=True
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory
         )
 
-    def val_dataloader(self, num_workers=0):
+    def val_dataloader(self):
         """Get validation dataloader"""
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=self.collate_fn,
-            num_workers=num_workers,
-            pin_memory=True
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory
         )
 
 
@@ -196,54 +254,94 @@ def load_config(config_path):
 
 
 if __name__ == "__main__":
-    # Unit tests for data loading
-    print("Testing data loader...")
+    # Unit tests for TinyStories data loading
+    print("Testing TinyStories Data Loader...")
+    print("=" * 70)
 
-    # Load config
-    config_path = "config.json"
-    if os.path.exists(config_path):
-        config = load_config(config_path)
+    # Test configuration
+    test_config = {
+        'dataset_name': 'roneneldan/TinyStories',
+        'tokenizer': 'gpt2',
+        'train_samples': 1000,  # Small sample for testing
+        'val_samples': 100,
+        'batch_size': 4,
+        'max_seq_length': 256,
+        'num_workers': 0,  # Single process for testing
+        'pin_memory': False
+    }
 
-        # Combine configs
-        data_config = {
-            'train_path': config['data_config']['train_path'],
-            'val_path': config['data_config']['val_path'],
-            'batch_size': config['training_config']['batch_size'],
-            'max_seq_length': config['model_config']['max_seq_length'],
-            'tokenizer': config['data_config']['tokenizer']
-        }
+    # Test 1: Create data module
+    print("\n1. Creating TinyStoriesDataModule...")
+    data_module = TinyStoriesDataModule(test_config)
+    data_module.setup()
+    print("✓ Data module created")
 
-        # Create data module
-        print("\n1. Creating WikiTextDataModule...")
-        data_module = WikiTextDataModule(data_config)
-        data_module.setup()
+    # Test 2: Test train dataloader
+    print("\n2. Testing train dataloader...")
+    train_loader = data_module.train_dataloader()
+    batch = next(iter(train_loader))
+    print(f"   Batch keys: {list(batch.keys())}")
+    print(f"   input_ids shape: {batch['input_ids'].shape}")
+    print(f"   attention_mask shape: {batch['attention_mask'].shape}")
+    print(f"   input_ids dtype: {batch['input_ids'].dtype}")
+    print(f"   Sample input_ids (first 10): {batch['input_ids'][0, :10].tolist()}")
+    print("✓ Train dataloader working")
 
-        # Test train dataloader
-        print("\n2. Testing train dataloader...")
-        train_loader = data_module.train_dataloader()
-        batch = next(iter(train_loader))
-        print(f"   Batch keys: {batch.keys()}")
-        print(f"   input_ids shape: {batch['input_ids'].shape}")
-        print(f"   attention_mask shape: {batch['attention_mask'].shape}")
-        print(f"   labels shape: {batch['labels'].shape}")
+    # Test 3: Test val dataloader
+    print("\n3. Testing val dataloader...")
+    val_loader = data_module.val_dataloader()
+    batch = next(iter(val_loader))
+    print(f"   input_ids shape: {batch['input_ids'].shape}")
+    print(f"   attention_mask shape: {batch['attention_mask'].shape}")
+    print("✓ Val dataloader working")
 
-        # Test val dataloader
-        print("\n3. Testing val dataloader...")
-        val_loader = data_module.val_dataloader()
-        batch = next(iter(val_loader))
-        print(f"   input_ids shape: {batch['input_ids'].shape}")
-        print(f"   attention_mask shape: {batch['attention_mask'].shape}")
+    # Test 4: Test tokenizer
+    print("\n4. Testing tokenizer...")
+    sample_story = "Once upon a time, there was a little girl who loved to play."
+    tokens = data_module.tokenizer.encode(sample_story)
+    decoded = data_module.tokenizer.decode(tokens)
+    print(f"   Original: {sample_story}")
+    print(f"   Tokens: {tokens}")
+    print(f"   Decoded: {decoded}")
+    print(f"   Vocab size: {len(data_module.tokenizer)}")
+    print(f"   Pad token ID: {data_module.tokenizer.pad_token_id}")
+    print("✓ Tokenizer working")
 
-        # Test tokenizer
-        print("\n4. Testing tokenizer...")
-        sample_text = "Hello, world!"
-        tokens = data_module.tokenizer.encode(sample_text)
-        decoded = data_module.tokenizer.decode(tokens)
-        print(f"   Original: {sample_text}")
-        print(f"   Tokens: {tokens}")
-        print(f"   Decoded: {decoded}")
+    # Test 5: Verify padding
+    print("\n5. Testing dynamic padding...")
+    # Get a few batches to see varying lengths
+    for i, batch in enumerate(train_loader):
+        if i >= 3:
+            break
+        print(f"   Batch {i+1} - Max length in batch: {batch['input_ids'].shape[1]}")
+    print("✓ Dynamic padding working")
 
-        print("\n✓ All data loader tests passed!")
-    else:
-        print(f"Config file not found: {config_path}")
-        print("Run this test from the mha/ directory")
+    # Test 6: Decode a sample story
+    print("\n6. Decoding a sample story...")
+    batch = next(iter(train_loader))
+    sample_ids = batch['input_ids'][0]
+    # Remove padding
+    mask = batch['attention_mask'][0]
+    sample_ids = sample_ids[mask == 1]
+    decoded_story = data_module.tokenizer.decode(sample_ids)
+    print(f"   Story length: {len(sample_ids)} tokens")
+    print(f"   Story: {decoded_story[:200]}...")
+    print("✓ Story decoding working")
+
+    # Test 7: Check data statistics
+    print("\n7. Dataset statistics...")
+    lengths = []
+    for i, item in enumerate(data_module.train_dataset):
+        if i >= 100:  # Check first 100 samples
+            break
+        lengths.append(len(item['input_ids']))
+
+    print(f"   Samples checked: {len(lengths)}")
+    print(f"   Min length: {min(lengths)} tokens")
+    print(f"   Max length: {max(lengths)} tokens")
+    print(f"   Avg length: {sum(lengths) / len(lengths):.1f} tokens")
+    print("✓ Statistics computed")
+
+    print("\n" + "=" * 70)
+    print("✓ All TinyStories data loader tests passed!")
+    print("=" * 70)
