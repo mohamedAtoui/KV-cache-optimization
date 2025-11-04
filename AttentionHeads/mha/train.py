@@ -13,13 +13,21 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
-from torch.cuda.amp import autocast, GradScaler
 import os
 import sys
 import argparse
 from tqdm import tqdm
 import math
 import json
+
+# Import autocast with version compatibility
+try:
+    # PyTorch >= 1.10
+    from torch.cuda.amp import autocast
+except ImportError:
+    # Older PyTorch versions
+    from torch.cuda.amp import autocast as old_autocast
+    autocast = old_autocast
 
 # Import local modules
 from .transformer import GPTNeoForCausalLM, create_gptneo_model
@@ -195,7 +203,7 @@ class GPTNeoTrainer:
         input_ids = batch['input_ids'].to(self.device)
 
         # Forward pass with mixed precision
-        with autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_bf16):
+        with autocast(enabled=self.use_bf16):
             # Model computes loss internally when labels are provided
             loss, logits = self.model(input_ids, labels=input_ids)
 
@@ -236,7 +244,7 @@ class GPTNeoTrainer:
             input_ids = batch['input_ids'].to(self.device)
 
             # Forward pass with mixed precision
-            with autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_bf16):
+            with autocast(enabled=self.use_bf16):
                 loss, _ = self.model(input_ids, labels=input_ids)
 
             # Calculate number of tokens (excluding padding)
