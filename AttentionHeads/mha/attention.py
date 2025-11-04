@@ -49,8 +49,9 @@ def attention(query, key, value, mask=None, dropout=None):
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
 
     # Apply mask if provided (set masked positions to large negative value)
+    # Use -1e4 instead of -1e9 for BFloat16 compatibility (prevents overflow)
     if mask is not None:
-        scores = scores.masked_fill(mask == 0, -1e9)
+        scores = scores.masked_fill(mask == 0, -1e4)
 
     # Apply softmax to get attention probabilities
     p_attn = F.softmax(scores, dim=-1)
