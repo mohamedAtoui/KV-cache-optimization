@@ -1,57 +1,68 @@
 """
-Multi-Head Attention (MHA) Transformer Implementation
+GPTNeo Decoder-Only Transformer Package
 
-Based on "Attention Is All You Need" (Vaswani et al., 2017)
-Implementation follows Harvard NLP's Annotated Transformer:
-https://nlp.seas.harvard.edu/annotated-transformer/
+A complete implementation of GPTNeo-style decoder-only transformer
+optimized for training on TinyStories dataset with A100 GPUs.
+
+Key Features:
+    - GPTNeo decoder-only architecture (~85-95M parameters)
+    - BFloat16 mixed precision training
+    - TinyStories dataset integration
+    - A100-optimized training pipeline
+    - Built-in text generation
+
+Example:
+    >>> from mha import GPTNeoForCausalLM, create_gptneo_model
+    >>>
+    >>> # Create model
+    >>> config = {
+    ...     'vocab_size': 50257,
+    ...     'hidden_size': 768,
+    ...     'num_layers': 8,
+    ...     'num_heads': 12,
+    ...     'intermediate_size': 3072,
+    ...     'max_position_embeddings': 512,
+    ...     'dropout': 0.2
+    ... }
+    >>> model = create_gptneo_model(config)
+    >>>
+    >>> # Train
+    >>> from mha import GPTNeoTrainer
+    >>> trainer = GPTNeoTrainer(full_config)
+    >>> trainer.train()
 
 Reference:
-    Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N.,
-    Kaiser, Ł., & Polosukhin, I. (2017). Attention is all you need. In Advances
-    in neural information processing systems (pp. 5998-6008).
-
-Example usage (Harvard NLP style):
-    from mha import make_model
-
-    # Create standard transformer (Harvard NLP way)
-    model = make_model(src_vocab=10000, tgt_vocab=10000, N=6)
-
-Example usage (backward compatible):
-    from mha import Transformer
-
-    # Create transformer (legacy way, still supported)
-    model = Transformer(vocab_size=50257, d_model=512, num_heads=8)
+    Eldan, R., & Li, Y. (2023). TinyStories: How Small Can Language Models Be
+    and Still Speak Coherent English? arXiv:2305.07759.
 """
 
 __version__ = "1.0.0"
-__author__ = "LLM-Journey Contributors"
+__author__ = "Attaimen"
+__email__ = "wmis066@live.rhul.ac.uk"
 
-# Harvard NLP Transformer Components
+# Core architecture
 from .transformer import (
-    # Harvard NLP classes
-    EncoderDecoder,
-    Encoder,
-    Decoder,
-    EncoderLayer,
-    DecoderLayer,
-    Embeddings,
-    Generator,
-    make_model,
-    # Backward compatibility
-    Transformer,
-    TransformerEncoder,
-    TransformerDecoder,
+    GPTNeoBlock,
+    GPTNeoModel,
+    GPTNeoForCausalLM,
+    create_gptneo_model,
 )
 
-# Attention mechanisms
+# Training
+from .train import GPTNeoTrainer
+
+# Data loading
+from .data_loader import (
+    TinyStoriesDataset,
+    TinyStoriesDataModule,
+    load_config,
+)
+
+# Attention mechanism
 from .attention import (
-    # Harvard NLP
-    attention,
     MultiHeadedAttention,
+    attention,
     subsequent_mask,
-    # Backward compatibility
-    MultiHeadAttention,
-    # Mask utilities
     create_causal_mask,
     create_padding_mask,
     create_combined_mask,
@@ -59,110 +70,84 @@ from .attention import (
 
 # Layers
 from .layers import (
-    # Harvard NLP
-    clones,
     LayerNorm,
     PositionwiseFeedForward,
     SublayerConnection,
-    # Backward compatibility
-    FeedForward,
-    ResidualConnection,
-    DropoutLayer,
+    clones,
 )
 
-# Positional encodings
+# Utilities
+from .utils import (
+    MetricsTracker,
+    Logger,
+    CheckpointManager,
+    set_seed,
+    count_parameters,
+)
+
+# Positional encoding (legacy - not used in GPTNeo but kept for compatibility)
 from .positional_encoding import (
-    # Harvard NLP
     PositionalEncoding,
-    # Alternative
-    LearnedPositionalEncoding,
-    # Backward compatibility
-    SinusoidalPositionalEncoding,
     PositionalEncodingFactory,
 )
 
-# Training utilities
-from .utils import (
-    # Harvard NLP
-    rate,
-    Batch,
-    # Other utilities
-    MetricsTracker,
-    LabelSmoothing,
-    Logger,
-    CheckpointManager,
-    AttentionVisualizer,
-)
-
-# Inference utilities
-from .inference import (
-    # Harvard NLP
-    greedy_decode,
-    # Text generation
-    TextGenerator,
-)
-
-# Define what gets imported with "from mha import *"
+# Define public API
 __all__ = [
-    # Version info
-    '__version__',
-    '__author__',
+    # Version
+    "__version__",
+    "__author__",
+    "__email__",
 
-    # Harvard NLP Transformer (RECOMMENDED)
-    'make_model',
-    'EncoderDecoder',
-    'Encoder',
-    'Decoder',
-    'EncoderLayer',
-    'DecoderLayer',
-    'Embeddings',
-    'Generator',
+    # Core architecture
+    "GPTNeoBlock",
+    "GPTNeoModel",
+    "GPTNeoForCausalLM",
+    "create_gptneo_model",
 
-    # Backward compatibility
-    'Transformer',
-    'TransformerEncoder',
-    'TransformerDecoder',
+    # Training
+    "GPTNeoTrainer",
 
-    # Attention (Harvard NLP)
-    'attention',
-    'MultiHeadedAttention',
-    'subsequent_mask',
+    # Data
+    "TinyStoriesDataset",
+    "TinyStoriesDataModule",
+    "load_config",
 
-    # Attention (backward compatibility)
-    'MultiHeadAttention',
-    'create_causal_mask',
-    'create_padding_mask',
-    'create_combined_mask',
+    # Attention
+    "MultiHeadedAttention",
+    "attention",
+    "subsequent_mask",
+    "create_causal_mask",
+    "create_padding_mask",
+    "create_combined_mask",
 
-    # Layers (Harvard NLP)
-    'clones',
-    'PositionwiseFeedForward',
-    'SublayerConnection',
+    # Layers
+    "LayerNorm",
+    "PositionwiseFeedForward",
+    "SublayerConnection",
+    "clones",
 
-    # Layers (backward compatibility)
-    'LayerNorm',
-    'FeedForward',
-    'ResidualConnection',
-    'DropoutLayer',
+    # Utilities
+    "MetricsTracker",
+    "Logger",
+    "CheckpointManager",
+    "set_seed",
+    "count_parameters",
 
-    # Positional encodings
-    'PositionalEncoding',
-    'SinusoidalPositionalEncoding',
-    'LearnedPositionalEncoding',
-    'PositionalEncodingFactory',
-
-    # Training utilities (Harvard NLP)
-    'rate',
-    'Batch',
-
-    # Other utilities
-    'MetricsTracker',
-    'LabelSmoothing',
-    'Logger',
-    'CheckpointManager',
-    'AttentionVisualizer',
-
-    # Inference (Harvard NLP)
-    'greedy_decode',
-    'TextGenerator',
+    # Positional encoding (legacy)
+    "PositionalEncoding",
+    "PositionalEncodingFactory",
 ]
+
+# Package metadata
+__doc_url__ = "https://gitlab.cim.rhul.ac.uk/wmis066/PROJECT/blob/main/AttentionHeads/mha/README.md"
+__source_url__ = "https://gitlab.cim.rhul.ac.uk/wmis066/PROJECT"
+
+# Print welcome message when imported
+def _print_info():
+    """Print package information"""
+    print(f"GPTNeo TinyStories v{__version__}")
+    print(f"Decoder-only transformer for causal language modeling")
+    print(f"Documentation: {__doc_url__}")
+
+# Uncomment to show info on import
+# _print_info()
