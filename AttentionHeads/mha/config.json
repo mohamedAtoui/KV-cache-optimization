@@ -5,11 +5,11 @@
 
   "model": {
     "vocab_size": 50257,
-    "hidden_size": 768,
+    "hidden_size": 256,
     "num_layers": 8,
-    "num_heads": 12,
-    "intermediate_size": 3072,
-    "max_position_embeddings": 512,
+    "num_heads": 8,
+    "intermediate_size": 1024,
+    "max_position_embeddings": 256,
     "dropout": 0.2,
     "activation": "gelu",
     "layer_norm_epsilon": 1e-5,
@@ -19,13 +19,13 @@
 
   "training": {
     "dataset": "tinystories",
-    "train_samples": 100000,
+    "train_samples": 30000,
     "val_samples": 5000,
-    "batch_size": 128,
-    "gradient_accumulation_steps": 1,
+    "batch_size": 64,
+    "gradient_accumulation_steps": 2,
     "effective_batch_size": 128,
-    "max_steps": 25000,
-    "warmup_steps": 500,
+    "max_steps": 6000,
+    "warmup_steps": 300,
     "learning_rate": 0.001,
     "min_learning_rate": 1e-5,
     "lr_scheduler": "cosine",
@@ -36,7 +36,7 @@
     "adam_beta1": 0.9,
     "adam_beta2": 0.999,
     "adam_epsilon": 1e-8,
-    "max_seq_length": 512
+    "max_seq_length": 256
   },
 
   "data": {
@@ -53,17 +53,17 @@
   "logging": {
     "log_dir": "../logs/gptneo_tinystories",
     "checkpoint_dir": "../checkpoints/gptneo_tinystories",
-    "save_every_steps": 1000,
-    "eval_every_steps": 500,
+    "save_every_steps": 2000,
+    "eval_every_steps": 1000,
     "log_every_steps": 50,
     "use_tensorboard": true,
     "use_wandb": false,
     "project_name": "gptneo-tinystories",
-    "run_name": "gptneo_768_8l_a100"
+    "run_name": "gptneo_256_8l_l4_fast"
   },
 
   "evaluation": {
-    "eval_batch_size": 64,
+    "eval_batch_size": 32,
     "eval_max_steps": 100,
     "generation_prompts": [
       "Once upon a time",
@@ -79,7 +79,7 @@
 
   "hardware": {
     "device": "cuda",
-    "gpu_type": "A100",
+    "gpu_type": "L4",
     "mixed_precision": "bf16",
     "compile_model": false,
     "ddp": false,
@@ -98,11 +98,11 @@
   "random_seed": 42,
 
   "notes": {
-    "expected_params": "~85-95M parameters with vocab=50257",
-    "expected_training_time": "~3-4 hours on A100",
-    "expected_train_ppl": "15-20",
-    "expected_val_ppl": "18-25",
+    "expected_params": "~8M parameters (matches TinyStories-8M from paper)",
+    "expected_training_time": "~1.5-2 hours on L4",
+    "expected_train_ppl": "20-30",
+    "expected_val_ppl": "25-35",
     "dataset_source": "TinyStories paper (Eldan & Li, 2023)",
-    "optimization": "A100 optimized with BFloat16, large batch size, high LR"
+    "optimization": "Fast training config: 8M model (256d, 8L), 6K steps, 30K samples, batch_size=64"
   }
 }
