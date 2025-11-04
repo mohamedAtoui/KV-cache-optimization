@@ -1,0 +1,17 @@
+{
+  "tokenizer": "gpt2",
+  "vocab_size": 50257,
+  "max_seq_length": 512,
+  "random_seed": 42,
+  "datasets": {
+    "wikitext2": {
+      "train": 36718,
+      "val": 3760
+    },
+    "wikitext103": {
+      "train": 1801350,
+      "val": 3760
+    }
+  },
+  "date": "2025-10-22"
+}
