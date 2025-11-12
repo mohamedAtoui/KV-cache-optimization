@@ -30,7 +30,7 @@ This implementation is based on the excellent [Annotated Transformer](https://nl
 - **Harvard NLP Style**: Follows the annotated transformer's clean, educational structure
 - **Multiple Generation Strategies**: Greedy, temperature, top-k, nucleus sampling
 - **Training Infrastructure**: Learning rate scheduling, label smoothing, checkpointing
-- **WikiText-2 Training**: Pre-configured for language modeling
+- **TinyStories Training**: Pre-configured for efficient language modeling
 - **Modular Design**: Easy to understand, extend, and modify
 - **Backward Compatible**: Supports both Harvard NLP style and legacy API
 
@@ -148,7 +148,7 @@ text = generator.generate_nucleus(prompt, p=0.9)
 | **Base Structure** | Single file tutorial | Modular package structure |
 | **API Style** | `make_model()` factory | Both `make_model()` and `Transformer` class |
 | **Architecture** | Exact paper implementation | Same + backward compatible |
-| **Training** | Basic examples | Full WikiText-2 pipeline |
+| **Training** | Basic examples | Full TinyStories pipeline |
 | **Inference** | Greedy decode | Multiple sampling strategies |
 | **Organization** | Educational (single file) | Production (modular) |
 | **Extras** | - | TensorBoard, checkpointing, visualization |
@@ -165,21 +165,22 @@ LLM-Journey/
 │   ├── transformer.py            # Full architecture
 │   ├── utils.py                  # Training utilities
 │   ├── inference.py              # Text generation
-│   └── data_loader.py            # WikiText data loading
+│   └── data_loader.py            # TinyStories data loading
 ├── notebooks/
-│   └── train_mha_colab.ipynb    # Training notebook for Colab
+│   └── train_gptneo_tinystories.ipynb    # Training notebook for Colab
 ├── README.md                     # This file
 └── setup.py                      # Package setup
 ```
 
-## 🎓 Training on WikiText-2
+## 🎓 Training on TinyStories
 
 We provide a complete Colab notebook for training:
 
-1. Open `notebooks/train_mha_colab.ipynb` in Google Colab
-2. Run all cells to train on WikiText-2
-3. Model checkpoints are saved to Google Drive
-4. Includes inference examples and attention visualization
+1. Open `notebooks/train_gptneo_tinystories.ipynb` in Google Colab
+2. Run all cells to train on TinyStories dataset
+3. Model checkpoints are saved automatically
+4. Optimized for L4 GPU with BFloat16 precision
+5. Expected training time: ~45-60 minutes for 6K steps
 
 ## 🤝 Acknowledgments
 

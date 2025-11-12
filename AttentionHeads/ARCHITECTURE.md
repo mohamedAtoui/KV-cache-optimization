@@ -2,6 +2,8 @@
 
 **Complete Guide to the `mha` Package and Training Pipeline**
 
+> **⚠️ NOTE**: This documentation primarily describes the legacy encoder-decoder Transformer architecture. The current recommended setup uses GPTNeo decoder-only architecture with TinyStories dataset. See `mha/README.md` and `notebooks/train_gptneo_tinystories.ipynb` for the latest documentation.
+
 ---
 
 ## 📋 Table of Contents
@@ -25,7 +27,7 @@ This repository implements the Transformer architecture from **"Attention Is All
 - ✅ **Harvard NLP Patterns**: Uses `make_model()`, `Batch` class, `rate()` scheduler
 - ✅ **Modular Design**: Each component in separate files for clarity
 - ✅ **Backward Compatible**: Supports both Harvard NLP and legacy API
-- ✅ **Complete Training**: Full WikiText-2 training pipeline with monitoring
+- ✅ **Complete Training**: Full training pipeline with TinyStories dataset
 - ✅ **Multiple Generation Methods**: Greedy, temperature, top-k, nucleus sampling
 - ✅ **Educational**: Extensive documentation and comments
 
@@ -43,15 +45,14 @@ LLM-Journey/
 │   ├── transformer.py                # Complete transformer architecture
 │   ├── utils.py                      # Training utilities (Batch, rate, etc.)
 │   ├── inference.py                  # Text generation and decoding
-│   ├── data_loader.py                # WikiText-2 data loading
+│   ├── data_loader.py                # TinyStories data loading
 │   ├── train.py                      # Training script
 │   └── config.json                   # Training configuration
 │
 ├── notebooks/
-│   ├── train_transformer_v2.ipynb    # Main training notebook (Colab)
-│   └── train_mha_colab.ipynb         # Original training notebook
+│   └── train_gptneo_tinystories.ipynb    # Main training notebook (L4 GPU, TinyStories)
 │
-├── data_processed/                   # Preprocessed WikiText-2 dataset
+├── data_processed/                   # Preprocessed datasets
 ├── checkpoints/                      # Model checkpoints
 ├── logs/                             # Training logs
 │
@@ -801,29 +802,29 @@ text = generator.generate_nucleus("The transformer", p=0.9)
 
 ### 8. `mha/data_loader.py`
 
-**Purpose**: Load and process WikiText-2 dataset
+**Purpose**: Load and process TinyStories dataset
 
 **Key Components**:
 
-#### `WikiTextDataModule`
-*Data loading and preprocessing*
+#### `TinyStoriesDataModule`
+*Data loading and preprocessing for TinyStories*
 
 ```python
-class WikiTextDataModule:
+class TinyStoriesDataModule:
     """
-    WikiText-2 data loading
+    TinyStories dataset loading
 
     Methods:
         prepare_data()      # Download and preprocess
-        setup()             # Create train/val/test splits
+        setup()             # Create train/val splits
         get_dataloaders()   # Create PyTorch DataLoaders
 
     Preprocessing:
-        1. Download WikiText-2 from HuggingFace
+        1. Download TinyStories from HuggingFace (roneneldan/TinyStories)
         2. Tokenize with GPT-2 tokenizer
-        3. Chunk into fixed-length sequences
+        3. Subset to 30K train / 5K val samples
         4. Add padding/attention masks
-        5. Save to disk
+        5. Optimized for fast training
     """
 ```
 
@@ -836,9 +837,9 @@ def load_config(config_path='config.json'):
     Load training hyperparameters
 
     Returns dict with:
-        - Model params (d_model, num_heads, etc.)
-        - Training params (batch_size, epochs, etc.)
-        - Data paths
+        - Model params (hidden_size, num_layers, etc.)
+        - Training params (batch_size, max_steps, etc.)
+        - Dataset params
     """
 ```
 
@@ -909,11 +910,11 @@ python -m mha.train --config config.json
 
 ```
 1. DATA PREPARATION
-   ├── Download WikiText-2 (via datasets library)
+   ├── Download TinyStories (via datasets library)
    ├── Tokenize with GPT-2 tokenizer
-   ├── Chunk into sequences of 512 tokens
+   ├── Subset to 30K train / 5K val samples
    ├── Add padding and attention masks
-   └── Save to disk (data_processed/)
+   └── Optimized for fast training
 
 2. MODEL CREATION
    └── model = make_model(
@@ -1006,7 +1007,7 @@ python -m mha.train --config config.json
    - Data subset options for experiments
 
 3. Data Loading (3 cells)
-   - Load WikiText-2
+   - Load TinyStories dataset
    - Create DataLoaders
    - Show dataset info
 
@@ -1449,7 +1450,7 @@ lrate = d_model^(-0.5) * min(step^(-0.5), step * warmup^(-1.5))
 - Perplexity of 100 = model is "confused" between ~100 choices per token
 - Lower is better
 - Good models: 30-60 (on test set)
-- Our WikiText-2 training: 180-220 (reasonable for 20 epochs)
+- TinyStories training: 25-40 (expected with optimized config)
 
 ### 6. Model Size vs Performance
 
@@ -1536,10 +1537,10 @@ inference.py (text generation)
 train.py (training script)
     ├── Uses make_model() from transformer.py
     ├── Uses Batch, rate from utils.py
-    └── Uses WikiTextDataModule from data_loader.py
+    └── Uses TinyStoriesDataModule from data_loader.py
 
-notebooks/train_transformer_v2.ipynb (training notebook)
-    └── Same dependencies as train.py
+notebooks/train_gptneo_tinystories.ipynb (training notebook)
+    └── Uses GPTNeo architecture with TinyStories dataset
 ```
 
 ---

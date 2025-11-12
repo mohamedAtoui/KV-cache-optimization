@@ -6,7 +6,7 @@
   "model": {
     "vocab_size": 50257,
     "hidden_size": 256,
-    "num_layers": 8,
+    "num_layers": 4,
     "num_heads": 8,
     "intermediate_size": 1024,
     "max_position_embeddings": 256,
@@ -22,15 +22,15 @@
     "train_samples": 30000,
     "val_samples": 5000,
     "batch_size": 64,
-    "gradient_accumulation_steps": 2,
-    "effective_batch_size": 128,
+    "gradient_accumulation_steps": 4,
+    "effective_batch_size": 256,
     "max_steps": 6000,
-    "warmup_steps": 300,
-    "learning_rate": 0.001,
-    "min_learning_rate": 1e-5,
+    "warmup_steps": 600,
+    "learning_rate": 5e-5,
+    "min_learning_rate": 1e-6,
     "lr_scheduler": "cosine",
     "weight_decay": 0.01,
-    "gradient_clip": 1.0,
+    "gradient_clip": 0.5,
     "use_bf16": true,
     "optimizer": "adamw",
     "adam_beta1": 0.9,
@@ -59,7 +59,7 @@
     "use_tensorboard": true,
     "use_wandb": false,
     "project_name": "gptneo-tinystories",
-    "run_name": "gptneo_256_8l_l4_fast"
+    "run_name": "gptneo_256_4l_l4_optimized"
   },
 
   "evaluation": {
@@ -81,7 +81,7 @@
     "device": "cuda",
     "gpu_type": "L4",
     "mixed_precision": "bf16",
-    "compile_model": false,
+    "compile_model": true,
     "ddp": false,
     "num_gpus": 1
   },
@@ -98,11 +98,11 @@
   "random_seed": 42,
 
   "notes": {
-    "expected_params": "~8M parameters (matches TinyStories-8M from paper)",
-    "expected_training_time": "~1.5-2 hours on L4",
+    "expected_params": "~10M parameters (4 layers, optimized for fast training)",
+    "expected_training_time": "~45-60 mins on L4",
     "expected_train_ppl": "20-30",
-    "expected_val_ppl": "25-35",
+    "expected_val_ppl": "25-40",
     "dataset_source": "TinyStories paper (Eldan & Li, 2023)",
-    "optimization": "Fast training config: 8M model (256d, 8L), 6K steps, 30K samples, batch_size=64"
+    "optimization": "Fast training config: 10M model (256d, 4L), 6K steps, 30K samples, batch_size=128, LR=5e-5"
   }
 }

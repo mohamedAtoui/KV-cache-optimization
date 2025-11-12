@@ -5,6 +5,8 @@
 **Date:** October 2025
 **Implementation:** Multi-Head Attention (MHA) Baseline
 
+> **⚠️ LEGACY DOCUMENTATION**: This report documents the original encoder-decoder Transformer implementation with WikiText-2 dataset. The current recommended approach uses GPTNeo decoder-only architecture with TinyStories dataset. See `mha/README.md` and `notebooks/train_gptneo_tinystories.ipynb` for current documentation.
+
 ---
 
 ## Table of Contents
