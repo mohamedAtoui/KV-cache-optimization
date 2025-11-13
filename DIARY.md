@@ -100,7 +100,26 @@ Next steps involve running full training experiments on TinyStories datasets.
 ---
 
 ## Week 4:
+### 📅 Day 7: November 4th – Changing Dataset to use Tiny Stories:
 
+- After a failed expriement with WikiText dataset, which was caused because of the complexity of dataset (Advanced language, different writing styles,...), I changed everything to use TinyStories dataset.
+eventhough I noticed a weird behaviour of increase in loss and perplexity, which I think goes bakc to the parameters I adjusted, specifically the learning rate.
+- Other thing I focused on is the code base which defines differnet parts of the Transformer, I solved a compatiblity issue of pytorch library features with computing which I use (L4 GPU).
+
+
+# Week 5:
+### 📅 Day 8: November 11th:
+After a long period because of other attachement I started again and I managed to train correctly my Transformer using TinyStories Dataset with Multi Head Attention,
+updating next parameters and helped in correting my training and reducing training time:
+ - num_layers: 4 (reduced from 8)
+ - learning_rate: 5e-5 (reduced from 1e-3 )
+ - gradient_accumulation_steps: 4 (increased from 2)
+ - effective_batch_size: 256 (doubled from 128)
+ - warmup_steps: 600 (doubled from 300)
+ - gradient_clip: 0.5 (tighter from 1.0)
+ - compile_model: true (enabled PyTorch compilation)
+
+ 
 
 
 
