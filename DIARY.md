@@ -119,6 +119,11 @@ updating next parameters and helped in correting my training and reducing traini
  - gradient_clip: 0.5 (tighter from 1.0)
  - compile_model: true (enabled PyTorch compilation)
 
+
+
+ 
+# week 6:
+
  
 
 
