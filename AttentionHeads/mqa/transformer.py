@@ -22,8 +22,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-from .attention import MultiQueryAttention, create_causal_mask
-from mha.layers import LayerNorm, PositionwiseFeedForward
+from .attention import MultiQueryAttention
+from AttentionHeads.mha.attention import create_causal_mask
+from AttentionHeads.mha.layers import LayerNorm, PositionwiseFeedForward
 
 
 class GPTNeoBlock(nn.Module):

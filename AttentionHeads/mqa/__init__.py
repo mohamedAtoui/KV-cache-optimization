@@ -57,23 +57,22 @@ from .transformer import (
 from .attention import (
     MultiQueryAttention,
     attention,
-    create_causal_mask,
 )
 
 # Import shared modules from mha (everything else is the same)
-from mha.train import GPTNeoTrainer
-from mha.data_loader import (
+from AttentionHeads.mha.train import GPTNeoTrainer
+from AttentionHeads.mha.data_loader import (
     TinyStoriesDataset,
     TinyStoriesDataModule,
     load_config,
 )
-from mha.layers import (
+from AttentionHeads.mha.layers import (
     LayerNorm,
     PositionwiseFeedForward,
     SublayerConnection,
     clones,
 )
-from mha.utils import (
+from AttentionHeads.mha.utils import (
     MetricsTracker,
     Logger,
     CheckpointManager,
@@ -83,7 +82,8 @@ from mha.utils import (
 )
 
 # Also import mask utilities from mha
-from mha.attention import (
+from AttentionHeads.mha.attention import (
+    create_causal_mask,
     subsequent_mask,
     create_padding_mask,
     create_combined_mask,

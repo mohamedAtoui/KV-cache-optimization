@@ -207,7 +207,7 @@ if __name__ == "__main__":
 
     # Test 3: Causal Mask
     print("\n3. Testing with Causal Mask...")
-    from mha.attention import create_causal_mask
+    from AttentionHeads.mha.attention import create_causal_mask
     causal_mask = create_causal_mask(seq_len, device)
     output, attn_weights = mqa(x, x, x, mask=causal_mask)
     print(f"   Output with causal mask shape: {output.shape}")
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     mqa_params = sum(p.numel() for p in mqa.parameters())
 
     # MHA parameters (for comparison)
-    from mha.attention import MultiHeadedAttention
+    from AttentionHeads.mha.attention import MultiHeadedAttention
     mha = MultiHeadedAttention(h, d_model, dropout=dropout_p).to(device)
     mha_params = sum(p.numel() for p in mha.parameters())
 
