@@ -458,6 +458,108 @@ def load_config(config_path):
     return config
 
 
+def validate_config(config):
+    """
+    Validate configuration to catch common errors before training
+
+    Checks critical constraints:
+    - Model architecture constraints
+    - Training hyperparameter ranges
+    - Data configuration
+    - Hardware compatibility
+
+    Args:
+        config: Configuration dictionary
+
+    Raises:
+        AssertionError: If validation fails with descriptive message
+
+    Example:
+        >>> config = load_config('mha/config.json')
+        >>> validate_config(config)
+        ✓ Configuration validation passed!
+    """
+    # Model architecture constraints
+    assert 'model' in config, "Missing 'model' section in config"
+    model_cfg = config['model']
+
+    assert model_cfg['hidden_size'] % model_cfg['num_heads'] == 0, \
+        f"hidden_size ({model_cfg['hidden_size']}) must be divisible by num_heads ({model_cfg['num_heads']})"
+
+    assert model_cfg['num_layers'] > 0, \
+        f"num_layers must be positive, got {model_cfg['num_layers']}"
+
+    assert model_cfg['num_heads'] > 0, \
+        f"num_heads must be positive, got {model_cfg['num_heads']}"
+
+    assert model_cfg['dropout'] >= 0 and model_cfg['dropout'] < 1, \
+        f"dropout must be in [0, 1), got {model_cfg['dropout']}"
+
+    # Training hyperparameter constraints
+    if 'training' in config:
+        train_cfg = config['training']
+
+        # Batch size consistency
+        if 'effective_batch_size' in train_cfg:
+            expected_effective = train_cfg['batch_size'] * train_cfg['gradient_accumulation_steps']
+            assert train_cfg['effective_batch_size'] == expected_effective, \
+                f"effective_batch_size ({train_cfg['effective_batch_size']}) != " \
+                f"batch_size ({train_cfg['batch_size']}) * gradient_accumulation_steps ({train_cfg['gradient_accumulation_steps']}) = {expected_effective}"
+
+        # Learning rate constraints
+        assert train_cfg['learning_rate'] > 0, \
+            f"learning_rate must be positive, got {train_cfg['learning_rate']}"
+
+        if 'min_learning_rate' in train_cfg:
+            assert train_cfg['learning_rate'] > train_cfg['min_learning_rate'], \
+                f"learning_rate ({train_cfg['learning_rate']}) must be greater than min_learning_rate ({train_cfg['min_learning_rate']})"
+
+        # Training steps constraints
+        assert train_cfg['max_steps'] > 0, \
+            f"max_steps must be positive, got {train_cfg['max_steps']}"
+
+        assert train_cfg['warmup_steps'] < train_cfg['max_steps'], \
+            f"warmup_steps ({train_cfg['warmup_steps']}) must be less than max_steps ({train_cfg['max_steps']})"
+
+        # Gradient clipping
+        if 'gradient_clip' in train_cfg:
+            assert train_cfg['gradient_clip'] > 0, \
+                f"gradient_clip must be positive, got {train_cfg['gradient_clip']}"
+
+            # Warn if gradient clip might be too high for BFloat16
+            if train_cfg.get('use_bf16', False) and train_cfg['gradient_clip'] > 1.0:
+                print(f"⚠ Warning: gradient_clip ({train_cfg['gradient_clip']}) > 1.0 with BFloat16 may cause instability")
+                print(f"  Recommended: gradient_clip <= 0.5 for BFloat16")
+
+    # Logging constraints
+    if 'logging' in config:
+        log_cfg = config['logging']
+
+        assert log_cfg['save_every_steps'] > 0, \
+            f"save_every_steps must be positive, got {log_cfg['save_every_steps']}"
+
+        assert log_cfg['eval_every_steps'] > 0, \
+            f"eval_every_steps must be positive, got {log_cfg['eval_every_steps']}"
+
+    # Warnings for common issues
+    if 'training' in config:
+        train_cfg = config['training']
+
+        # Warn about learning rate
+        if train_cfg['learning_rate'] > 1e-3:
+            print(f"⚠ Warning: learning_rate ({train_cfg['learning_rate']}) > 1e-3 may cause training instability")
+            print(f"  Recommended: learning_rate in [3e-5, 1e-4] for stable training")
+
+        # Warn about warmup
+        warmup_ratio = train_cfg['warmup_steps'] / train_cfg['max_steps']
+        if warmup_ratio < 0.05:
+            print(f"⚠ Warning: warmup_steps ({train_cfg['warmup_steps']}) is only {warmup_ratio*100:.1f}% of training")
+            print(f"  Recommended: warmup_steps = 5-10% of max_steps (at least {int(train_cfg['max_steps'] * 0.05)})")
+
+    print("✓ Configuration validation passed!")
+    return True
+
+
 if __name__ == "__main__":
     # Unit tests for utilities
     print("Testing utilities...")

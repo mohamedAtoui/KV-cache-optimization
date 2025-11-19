@@ -1,7 +1,7 @@
 {
-  "model_name": "gptneo_tinystories",
-  "architecture": "gpt_neo_decoder",
-  "description": "GPTNeo decoder-only transformer for TinyStories dataset with A100 optimization",
+  "model_name": "gptneo_mqa_tinystories",
+  "architecture": "gpt_neo_mqa",
+  "description": "GPTNeo decoder-only transformer with Multi-Query Attention for TinyStories dataset with L4 optimization",
 
   "model": {
     "vocab_size": 50257,
@@ -51,15 +51,15 @@
   },
 
   "logging": {
-    "log_dir": "../logs/gptneo_tinystories",
-    "checkpoint_dir": "../checkpoints/gptneo_tinystories",
+    "log_dir": "../logs/gptneo_mqa_tinystories",
+    "checkpoint_dir": "../checkpoints/gptneo_mqa_tinystories",
     "save_every_steps": 2000,
     "eval_every_steps": 1000,
     "log_every_steps": 50,
     "use_tensorboard": true,
     "use_wandb": false,
-    "project_name": "gptneo-tinystories",
-    "run_name": "gptneo_256_4l_l4_optimized"
+    "project_name": "gptneo-mqa-tinystories",
+    "run_name": "gptneo_mqa_256_4l_l4_optimized"
   },
 
   "evaluation": {
@@ -98,11 +98,13 @@
   "random_seed": 42,
 
   "notes": {
-    "expected_params": "~10M parameters (4 layers, optimized for fast training)",
-    "expected_training_time": "~45-60 mins on L4",
-    "expected_train_ppl": "20-30",
-    "expected_val_ppl": "25-40",
+    "attention_type": "Multi-Query Attention (MQA)",
+    "expected_params": "~12M parameters (4 layers, 44% fewer attention params than MHA)",
+    "expected_training_time": "~40-55 mins on L4 (slightly faster than MHA)",
+    "expected_train_ppl": "20-30 (similar to MHA)",
+    "expected_val_ppl": "25-45 (minor degradation vs MHA acceptable)",
     "dataset_source": "TinyStories paper (Eldan & Li, 2023)",
-    "optimization": "Fast training config: 10M model (256d, 4L), 6K steps, 30K samples, batch_size=128, LR=5e-5"
+    "optimization": "MQA reduces attention params and speeds up inference. Same successful hyperparameters as MHA (LR=5e-5, warmup=600)",
+    "mqa_benefits": "Faster decoding, smaller KV cache, fewer parameters, good for inference optimization"
   }
 }

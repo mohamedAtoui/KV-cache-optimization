@@ -1,218 +1,204 @@
-# LLM-Journey: Transformer Implementation
+# AttentionHeads: GPTNeo Language Model
 
-A comprehensive PyTorch implementation of the Transformer architecture from "Attention Is All You Need" (Vaswani et al., 2017), closely following **Harvard NLP's Annotated Transformer**.
+A clean PyTorch implementation of a **GPT-style decoder-only transformer** for language modeling, inspired by GPT-2 and GPTNeo architectures. Trained on the TinyStories dataset with optimized hyperparameters for small-scale language modeling.
 
-## 📚 Based on Harvard NLP's Annotated Transformer
+## Training Results
 
-This implementation is based on the excellent [Annotated Transformer](https://nlp.seas.harvard.edu/annotated-transformer/) by Harvard NLP, which provides a line-by-line implementation of the original Transformer paper with detailed explanations.
+**Best Performance** (see `TRAINING_RESULTS.md` for details):
+- Validation Loss: 3.6065
+- Validation Perplexity: 36.84
+- Training Time: ~45-60 minutes on L4 GPU
+- Dataset: TinyStories (30K training, 5K validation samples)
 
-### Citation
+## Features
 
-**Original Paper:**
-```bibtex
-@article{vaswani2017attention,
-  title={Attention is all you need},
-  author={Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N and Kaiser, {\L}ukasz and Polosukhin, Illia},
-  journal={Advances in neural information processing systems},
-  volume={30},
-  year={2017}
-}
-```
+- **GPTNeo Decoder-Only Architecture**: Causal language modeling like GPT-2
+- **Multi-Head Self-Attention**: 8-head attention mechanism with causal masking
+- **Optimized Training**: BFloat16 mixed precision for L4 GPUs
+- **Text Generation**: Greedy decoding, temperature sampling, top-k, nucleus sampling
+- **Complete Training Pipeline**: Data loading, checkpointing, TensorBoard logging
+- **Pre-configured for TinyStories**: Ready-to-use setup for story generation
+- **Modular & Clean Code**: Easy to understand, extend, and modify
+- **Well-Documented**: Comprehensive architecture docs and training results
 
-**Harvard NLP's Annotated Transformer:**
-- Website: https://nlp.seas.harvard.edu/annotated-transformer/
-- GitHub: https://github.com/harvardnlp/annotated-transformer
-
-## 🎯 Features
-
-- **Complete Transformer Architecture**: Full encoder-decoder implementation
-- **Multi-Head Attention (MHA)**: Standard transformer attention mechanism
-- **Harvard NLP Style**: Follows the annotated transformer's clean, educational structure
-- **Multiple Generation Strategies**: Greedy, temperature, top-k, nucleus sampling
-- **Training Infrastructure**: Learning rate scheduling, label smoothing, checkpointing
-- **WikiText-2 Training**: Pre-configured for language modeling
-- **Modular Design**: Easy to understand, extend, and modify
-- **Backward Compatible**: Supports both Harvard NLP style and legacy API
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/attaimen/LLM-Journey.git
-cd LLM-Journey
+git clone <your-repo-url>
+cd AttentionHeads
 
-# Install in editable mode
+# Install dependencies
+pip install -r requirements.txt
+
+# Install package in editable mode
 pip install -e .
 ```
 
-### Usage (Harvard NLP Style - Recommended)
+### Training
+
+Open the training notebook in Google Colab:
+
+1. Upload `notebooks/train_gptneo_tinystories.ipynb` to Colab
+2. Select L4 GPU runtime (Runtime → Change runtime type → L4 GPU)
+3. Run all cells to train the model
+4. Training takes ~45-60 minutes for 6,000 steps
+
+Or train locally:
 
 ```python
-from mha import make_model
+from mha import GPTNeo, TinyStoriesDataLoader
+from mha.train import train_model
+import json
 
-# Create a standard Transformer (Harvard NLP way)
-model = make_model(
-    src_vocab=10000,  # Source vocabulary size
-    tgt_vocab=10000,  # Target vocabulary size
-    N=6,              # Number of layers
-    d_model=512,      # Model dimension
-    d_ff=2048,        # Feed-forward dimension
-    h=8,              # Number of attention heads
-    dropout=0.1       # Dropout probability
+# Load configuration
+with open('mha/config.json', 'r') as f:
+    config = json.load(f)
+
+# Create model
+model = GPTNeo(**config['model'])
+
+# Load data
+train_loader, val_loader = TinyStoriesDataLoader.get_dataloaders(
+    **config['data']
 )
 
-# The model is ready to use!
-# It includes proper Xavier initialization
-```
-
-### Usage (Legacy Style - Still Supported)
-
-```python
-from mha import Transformer
-
-model = Transformer(
-    vocab_size=50257,      # GPT-2 vocabulary
-    d_model=512,           # Model dimension
-    num_heads=8,           # Attention heads
-    num_encoder_layers=6,  # Encoder layers
-    num_decoder_layers=6,  # Decoder layers
-    d_ff=2048,             # FFN dimension
-    max_seq_length=512,    # Max sequence length
-    dropout=0.1            # Dropout
-)
+# Train
+train_model(model, train_loader, val_loader, **config['training'])
 ```
 
 ### Text Generation
 
 ```python
-from mha.inference import TextGenerator
+from mha import GPTNeo
 from transformers import GPT2Tokenizer
+import torch
 
-# Load tokenizer
+# Load model
+model = GPTNeo.from_pretrained('checkpoints/mha/best_model.pt')
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
 
-# Create generator
-generator = TextGenerator(model, tokenizer, device='cuda')
+# Generate story
+prompt = "Once upon a time"
+input_ids = tokenizer.encode(prompt, return_tensors='pt')
+output = model.generate(input_ids, max_length=100, temperature=0.8)
 
-# Generate text
-text = generator.generate_greedy(
-    prompt="The transformer architecture",
-    max_length=50
-)
-print(text)
-
-# Or use other sampling methods
-text = generator.generate_with_temperature(prompt, temperature=0.8)
-text = generator.generate_top_k(prompt, k=50)
-text = generator.generate_nucleus(prompt, p=0.9)
+story = tokenizer.decode(output[0])
+print(story)
 ```
 
-## 📖 Implementation Details
+## Model Architecture
 
-### Architecture Components
-
-| Component | Harvard NLP Class | Description |
-|-----------|------------------|-------------|
-| **Model** | `EncoderDecoder` | Main seq2seq wrapper |
-| **Encoder** | `Encoder` | Stack of N encoder layers |
-| **Decoder** | `Decoder` | Stack of N decoder layers |
-| **Attention** | `MultiHeadedAttention` | Scaled dot-product attention with h heads |
-| **FFN** | `PositionwiseFeedForward` | Two-layer feed-forward network |
-| **Embeddings** | `Embeddings` | Token embeddings with √d_model scaling |
-| **Positional Encoding** | `PositionalEncoding` | Sinusoidal position encodings |
-| **Generator** | `Generator` | Linear projection + log softmax |
-
-### Key Functions
-
-- **`make_model()`**: Factory function to create a complete transformer
-- **`attention()`**: Core scaled dot-product attention function
-- **`rate()`**: Learning rate schedule with warmup
-- **`greedy_decode()`**: Autoregressive text generation
-- **`subsequent_mask()`**: Causal mask for decoder
-- **`clones()`**: Deep copy N modules
-
-### Training Utilities
-
-- **`Batch`**: Batch processing with automatic masking
-- **`rate()`**: Learning rate warmup schedule from the paper
-- **`LabelSmoothing`**: Smoothed cross-entropy loss
-- **`MetricsTracker`**: Loss and perplexity tracking
-- **`CheckpointManager`**: Model checkpointing
-
-## 🔬 Comparison: Original vs This Implementation
-
-| Aspect | Harvard NLP Annotated Transformer | This Implementation |
-|--------|-----------------------------------|---------------------|
-| **Base Structure** | Single file tutorial | Modular package structure |
-| **API Style** | `make_model()` factory | Both `make_model()` and `Transformer` class |
-| **Architecture** | Exact paper implementation | Same + backward compatible |
-| **Training** | Basic examples | Full WikiText-2 pipeline |
-| **Inference** | Greedy decode | Multiple sampling strategies |
-| **Organization** | Educational (single file) | Production (modular) |
-| **Extras** | - | TensorBoard, checkpointing, visualization |
-
-## 📂 Project Structure
+### GPTNeo Decoder-Only Transformer
 
 ```
-LLM-Journey/
-├── mha/                           # Main package
-│   ├── __init__.py               # Package exports
-│   ├── attention.py              # Multi-head attention
-│   ├── layers.py                 # LayerNorm, FFN, residual connections
-│   ├── positional_encoding.py   # Sinusoidal & learned PE
-│   ├── transformer.py            # Full architecture
-│   ├── utils.py                  # Training utilities
-│   ├── inference.py              # Text generation
-│   └── data_loader.py            # WikiText data loading
+Input Token IDs → Token Embeddings + Positional Embeddings
+                 ↓
+                Dropout (0.2)
+                 ↓
+         ┌──────────────────────┐
+         │  GPTNeo Block (×4)   │
+         │  - Pre-LayerNorm     │
+         │  - Self-Attention    │
+         │  - Residual          │
+         │  - Pre-LayerNorm     │
+         │  - Feed-Forward      │
+         │  - Residual          │
+         └──────────────────────┘
+                 ↓
+            Final LayerNorm
+                 ↓
+          Language Model Head
+                 ↓
+            Output Logits
+```
+
+### Model Configuration
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **hidden_size** | 256 | Model dimension (d_model) |
+| **num_layers** | 4 | Number of transformer blocks |
+| **num_heads** | 8 | Multi-head attention heads |
+| **intermediate_size** | 1024 | Feed-forward hidden dimension |
+| **vocab_size** | 50,257 | GPT-2 tokenizer vocabulary |
+| **max_seq_length** | 256 | Maximum sequence length |
+| **dropout** | 0.2 | Dropout probability |
+| **Total Parameters** | ~16M | 3.2M non-embedding + 12.9M embedding |
+
+### Key Features
+
+- **Pre-normalization**: LayerNorm before attention/FFN (training stability)
+- **Causal masking**: Prevents attending to future tokens
+- **Learned positional embeddings**: Like GPT-2, not sinusoidal
+- **GELU activation**: Smoother gradients than ReLU
+- **Weight tying**: LM head shares weights with token embeddings
+
+## Project Structure
+
+```
+AttentionHeads/
+├── mha/                          # Main package
+│   ├── __init__.py              # Package initialization
+│   ├── transformer.py           # GPTNeo model implementation
+│   ├── attention.py             # Multi-head self-attention
+│   ├── layers.py                # LayerNorm, FFN, residuals
+│   ├── train.py                 # Training loop with BFloat16
+│   ├── data_loader.py           # TinyStories dataset
+│   ├── utils.py                 # Metrics, logging, checkpointing
+│   ├── config.json              # Model & training configuration
+│   └── README.md                # Package documentation
 ├── notebooks/
-│   └── train_mha_colab.ipynb    # Training notebook for Colab
-├── README.md                     # This file
-└── setup.py                      # Package setup
+│   └── train_gptneo_tinystories.ipynb   # Training notebook (Colab)
+├── checkpoints/mha/             # Model checkpoints (auto-saved)
+├── logs/mha/                    # TensorBoard logs
+├── models/                      # Custom model architectures
+├── data_processed/              # Preprocessed datasets
+├── ARCHITECTURE.md              # Detailed architecture docs
+├── TRAINING_RESULTS.md          # Training results & parameters
+├── QUICKSTART.md                # Quick setup guide
+├── README.md                    # This file
+├── requirements.txt             # Dependencies
+└── setup.py                     # Package installation
 ```
 
-## 🎓 Training on WikiText-2
+## Documentation
 
-We provide a complete Colab notebook for training:
+- **QUICKSTART.md**: Quick setup and training guide
+- **ARCHITECTURE.md**: Detailed architecture explanation
+- **TRAINING_RESULTS.md**: Complete training results and parameter analysis
+- **mha/README.md**: Package-specific documentation
 
-1. Open `notebooks/train_mha_colab.ipynb` in Google Colab
-2. Run all cells to train on WikiText-2
-3. Model checkpoints are saved to Google Drive
-4. Includes inference examples and attention visualization
+## Key Hyperparameters
 
-## 🤝 Acknowledgments
+**Critical parameters for successful training** (see `TRAINING_RESULTS.md` for full analysis):
 
-This implementation is heavily inspired by and based on:
+- **Learning Rate**: 5e-5 (20x lower than initial failed attempts)
+- **Warmup Steps**: 600 (10% of total training)
+- **Gradient Clipping**: 0.5 (tight control for stability)
+- **Effective Batch Size**: 256 (via gradient accumulation)
+- **Model Layers**: 4 (reduced from 8 for faster, stable training)
 
-1. **Harvard NLP's Annotated Transformer** ([link](https://nlp.seas.harvard.edu/annotated-transformer/))
-   - Provided the clean, educational implementation structure
-   - Excellent line-by-line explanations of the paper
-   - Reference implementation for `make_model()`, `attention()`, and other core functions
+## Requirements
 
-2. **"Attention Is All You Need"** by Vaswani et al. (2017)
-   - Original Transformer paper
-   - Introduced the architecture we implement here
+- Python 3.8+
+- PyTorch 2.0+ (with BFloat16 support)
+- Transformers (for GPT-2 tokenizer)
+- Datasets (for TinyStories)
+- See `requirements.txt` for full list
 
-3. **Community**: Thanks to the PyTorch and Hugging Face communities for tools and resources
+## License
 
-## 📝 License
+MIT License - see LICENSE file for details.
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## References
 
-## 🔗 Related Resources
+- **TinyStories Dataset**: [roneneldan/TinyStories](https://huggingface.co/datasets/roneneldan/TinyStories)
+- **GPT-2 Paper**: "Language Models are Unsupervised Multitask Learners"
+- **Attention Paper**: "Attention Is All You Need" (Vaswani et al., 2017)
 
-- [Original Paper](https://arxiv.org/abs/1706.03762)
-- [Harvard NLP Annotated Transformer](https://nlp.seas.harvard.edu/annotated-transformer/)
-- [The Illustrated Transformer](http://jalammar.github.io/illustrated-transformer/)
-- [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
+## Contributing
 
-## 📧 Contact
-
-For questions or suggestions, please open an issue on GitHub.
-
----
-
-⭐ **Star this repo if you find it useful!**
-
-Built with ❤️ following Harvard NLP's excellent educational materials.
+Contributions are welcome! Please feel free to submit issues or pull requests.

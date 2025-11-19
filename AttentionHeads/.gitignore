@@ -106,3 +106,9 @@ Thumbs.db
 /data_processed/wikitext103_processed
 /DIARY.md
 
+# Documentation files (auto-generated/temporary)
+TRAINING_RESULTS.md
+QUICKSTART.md
+CLEANING_SUMMARY.md
+ARCHITECTURE.md
+
