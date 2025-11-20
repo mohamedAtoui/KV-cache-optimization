@@ -109,7 +109,7 @@ eventhough I noticed a weird behaviour of increase in loss and perplexity, which
 
 # Week 5:
 ### 📅 Day 8: November 11th:
-After a long period because of other attachement I started again and I managed to train correctly my Transformer using TinyStories Dataset with Multi Head Attention,
+After a long period because of other attachements, I started again and I managed to train correctly my Transformer using TinyStories Dataset with Multi Head Attention,
 updating next parameters and helped in correting my training and reducing training time:
  - num_layers: 4 (reduced from 8)
  - learning_rate: 5e-5 (reduced from 1e-3 )
@@ -124,7 +124,19 @@ updating next parameters and helped in correting my training and reducing traini
  
 # week 6:
 
- 
+### Day 9: November 19th:
+I managed yesterday to finish training LLM which uses MQA attention head strcutre, the result is good from first try and that may happened because I used simialire architecture to previous MHA with only single difference where all 8 heads share same KV:
+which means:
+
+-   Q projection: 256 → 256  (8 heads × 32 dims each)
+-   K projection: 256 → 32   (1 head  × 32 dims) ← SHARED across all 8 Q heads
+-   V projection: 256 → 32   (1 head  × 32 dims) ← SHARED across all 8 Q heads
+-   Output:      256 → 256
+
+
+
+
+
 
 
 
