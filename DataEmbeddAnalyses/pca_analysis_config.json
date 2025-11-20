@@ -1,0 +1,28 @@
+{
+  "data": {
+    "dataset_name": "roneneldan/TinyStories",
+    "tokenizer": "gpt2",
+    "train_samples": 30000,
+    "val_samples": 5000,
+    "max_seq_length": 256,
+    "random_seed": 42
+  },
+  "embedding": {
+    "vocab_size": 50257,
+    "hidden_size": 256,
+    "max_position_embeddings": 256,
+    "initializer_std": 0.02
+  },
+  "pca": {
+    "n_components": 3,
+    "random_state": 42
+  },
+  "visualization": {
+    "max_points_plot": 10000,
+    "figsize": [
+      12,
+      9
+    ],
+    "dpi": 150
+  }
+}
