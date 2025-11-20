@@ -86,10 +86,11 @@ from .utils import (
 )
 
 # Positional encoding (legacy - not used in GPTNeo but kept for compatibility)
-from .positional_encoding import (
-    PositionalEncoding,
-    PositionalEncodingFactory,
-)
+# NOTE: positional_encoding.py file doesn't exist, imports commented out
+# from .positional_encoding import (
+#     PositionalEncoding,
+#     PositionalEncodingFactory,
+# )
 
 # Define public API
 __all__ = [
@@ -133,9 +134,9 @@ __all__ = [
     "set_seed",
     "count_parameters",
 
-    # Positional encoding (legacy)
-    "PositionalEncoding",
-    "PositionalEncodingFactory",
+    # Positional encoding (legacy) - commented out as file doesn't exist
+    # "PositionalEncoding",
+    # "PositionalEncodingFactory",
 ]
 
 # Package metadata
