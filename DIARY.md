@@ -133,6 +133,31 @@ which means:
 -   V projection: 256 → 32   (1 head  × 32 dims) ← SHARED across all 8 Q heads
 -   Output:      256 → 256
 
+### Day 10: November 22nd:
+I managed today to compare between MQA and MAH models, first of all due to the small size of both models which is 16M parameters there was not that noticable Optimization in time and memory,
+but it was alligning with what MQA paper says () where I measured a speed up of 1.02x knowing that I have 256 token sequences (short) so in 2048 tokens it is expected to be: 1.5-2.5×
+
+KV-Cache = 2 × num_layers × seq_length × num_kv_heads × head_dim × bytes_per_param
+Our case: 256 token seqs 
+KV-Cache(MHA) = 2 × 4 × 256 × **8** × 64 × 2 = 2.1 MB 
+KV-Cache(MQA) = 2 × 4 × 256 × **1** × 64 × 2 = 0.26 MB
+--> KV-Cache(MHA) = 8 x KV-Cache(MQA)
+
+and based on Shazeer (2019) MQA Paper:  
+
+Speedup = 1 / (a + (1-a)/H):
+  - a = fraction of time spent on non-attention compute
+  - H = number of heads (reduction factor for MQA)
+
+At small scale with short sequences, a = 0.95 (95% compute, 5% memory):
+Speedup = 1 / (0.95 + 0.05/8) = 1 / 0.956 = 1.04×
+
+At larger scale with longer sequences, a = 0.5 (50% compute, 50% memory):
+Speedup = 1 / (0.5 + 0.5/8) = 1 / 0.5625 = 1.78×
+
+
+intresting thing I foudn today which is: Pythia-1B which is an experimental LLMs in different sizes (70M-12B) where I will change its head of attention (by default is MHA)
+into MQA and GQA using **uptraining** as  GQA paper (Ainslie et al., 2023) demonstrated.
 
 
 
