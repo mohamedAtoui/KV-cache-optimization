@@ -160,7 +160,24 @@ intresting thing I foudn today which is: Pythia-1B which is an experimental LLMs
 into MQA and GQA using **uptraining** as  GQA paper (Ainslie et al., 2023) demonstrated.
 
 
+# week 7:
 
+
+### Day 11" November 24th:
+After reading Pythia paper I decided to continue 
+
+Today's I finished setting-up GQA Attention Head which has next strcutre:
+
+- Query tensor of shape (..., seq_len_q, d_k)
+- key: Key tensor of shape (..., seq_len_k, d_k)
+- value: Value tensor of shape (..., seq_len_v, d_k)
+
+so if we comapre it to MHA and MQA:
+- MHA: h query heads, h KV heads (each query head has its own K,V)
+- MQA: h query heads, 1 KV head (all query heads share K,V)
+- GQA: h query heads, g KV heads where 1 < g < h (groups of query heads share K,V)
+
+and after a quick searhc it's being used more than MHA and MQA in real world LLM's (LLama 2, Mistral 7b,...)
 
 
 
