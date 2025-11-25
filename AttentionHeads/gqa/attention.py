@@ -10,7 +10,7 @@ Key Innovation: GQA is an interpolation between MHA and MQA.
 - MQA: h query heads, 1 KV head (all query heads share K,V)
 - GQA: h query heads, g KV heads where 1 < g < h (groups of query heads share K,V)
 
-Reference:
+Reference
     Ainslie, J., Lee-Thorp, J., de Jong, M., Zemlyanskiy, Y., Lebron, F., &
     Sanghai, S. (2023). GQA: Training Generalized Multi-Query Transformer
     Models from Multi-Head Checkpoints. arXiv preprint arXiv:2305.13245.
