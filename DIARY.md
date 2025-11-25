@@ -163,7 +163,7 @@ into MQA and GQA using **uptraining** as  GQA paper (Ainslie et al., 2023) demon
 # week 7:
 
 
-### Day 11" November 24th:
+### Day 11 November 24th:
 After reading Pythia paper I decided to continue 
 
 Today's I finished setting-up GQA Attention Head which has next strcutre:
@@ -179,6 +179,10 @@ so if we comapre it to MHA and MQA:
 
 and after a quick searhc it's being used more than MHA and MQA in real world LLM's (LLama 2, Mistral 7b,...)
 
+
+### Day 12 November 25th:
+Today I managed to train GQA Attention head with 4 Attention head, same architecture as MHA but with half attention heads, next thing is comparing:
+MHA, MQA, GQA in different aspects: quality of responses, inference time, memory usage (my approach and forcast with a big number of parameters).
 
 
 
