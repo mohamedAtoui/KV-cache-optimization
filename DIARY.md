@@ -184,6 +184,13 @@ and after a quick searhc it's being used more than MHA and MQA in real world LLM
 Today I managed to train GQA Attention head with 4 Attention head, same architecture as MHA but with half attention heads, next thing is comparing:
 MHA, MQA, GQA in different aspects: quality of responses, inference time, memory usage (my approach and forcast with a big number of parameters).
 
+### Day 13 November 27th:
+Today I managed to compare MQA, MHA, GQA from different prespectives:
 
+- MHA wins on quality: significantly lower perplexity (119 vs 207-260) and higher accuracy across all top-k metrics
+- KV-cache savings confirmed : MQA achieves 87.5% memory reduction, GQA 50%, exactly as expected
+- No speed advantage observed : all models similar throughput (~55-58k tok/s), likely because model is too small for memory bandwidth to matter
+- Quality gap is suspiciously large : MQA/GQA typically lose only 5-15% vs MHA, not 70-117% which suggests undertrained or architecture issue
+- GQA is best middle ground : better quality than MQA, still gets 50% cache savings
 
 
