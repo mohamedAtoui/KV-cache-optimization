@@ -193,4 +193,8 @@ Today I managed to compare MQA, MHA, GQA from different prespectives:
 - Quality gap is suspiciously large : MQA/GQA typically lose only 5-15% vs MHA, not 70-117% which suggests undertrained or architecture issue
 - GQA is best middle ground : better quality than MQA, still gets 50% cache savings
 
+# week 8 to week 11:
+I spend this time refactoring the code, and writing report.
+
+
 
