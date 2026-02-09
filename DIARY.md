@@ -197,4 +197,17 @@ Today I managed to compare MQA, MHA, GQA from different prespectives:
 I spend this time refactoring the code, and writing report.
 
 
+# Week 12:
+
+### 📅 Day 14: February 2nd – Multi-Head Latent Attention (MLA)
+
+Today I started reading about MLA (Multi-Head Latent Attention) from the "DeepSeek-V2" paper (May 2024).
+Key difference from MQA/GQA: Instead of reducing the number of KV heads, MLA compresses all keys and values into a small latent vector c_t (dimension d_c ≪ d_model). Only this compact vector is cached — full K and V are reconstructed on-the-fly via learned up-projections.
+
+- MQA/GQA reduce cache by throwing away heads → quality loss
+- MLA reduces cache by low-rank compression → preserves full multi-head expressiveness
+
+DeepSeek-V2 reports MLA achieves better performance than MHA while using less cache than even GQA.
+
+
 
