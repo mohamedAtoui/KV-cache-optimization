@@ -1,18 +1,19 @@
 """
-GPTNeo Decoder-Only Transformer with Multi-Query Attention (MQA)
+GPTNeo Decoder-Only Transformer with Multi-Head Latent Attention (MLA)
 
 Based on:
-- "Fast Transformer Decoding: One Write-head is All You Need" (Shazeer 2019)
+- "DeepSeek-V2: A Strong, Economical, and Efficient MoE LM" (DeepSeek-AI, 2024)
 - GPT architecture for causal language modeling
 
-Key difference from mha/transformer.py:
-- Uses MultiQueryAttention instead of MultiHeadedAttention
-- All other components are identical
+Key difference from other variants:
+- Uses MultiHeadLatentAttention with low-rank KV compression
+- RoPE is built into MLA (no separate position embeddings)
+- Smaller KV-cache than MHA while maintaining quality
 
 Architecture:
     - Decoder-only (no encoder)
-    - Causal multi-query attention throughout
-    - Token + Positional embeddings
+    - Causal multi-head latent attention throughout
+    - Token embeddings only (RoPE inside attention)
     - Stack of N transformer blocks
     - Language modeling head for next-token prediction
 """
@@ -22,38 +23,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-from .attention import MultiQueryAttention
+from .attention import MultiHeadLatentAttention
 from AttentionHeads.mha.attention import create_causal_mask
 from AttentionHeads.mha.layers import LayerNorm, PositionwiseFeedForward
 
 
 class GPTNeoBlock(nn.Module):
     """
-    Single GPTNeo Decoder Block with Multi-Query Attention
-
-    A decoder block consisting of:
-        1. Layer Normalization
-        2. Causal Multi-Query Self-Attention (MQA)
-        3. Residual connection
-        4. Layer Normalization
-        5. Position-wise Feed-Forward Network
-        6. Residual connection
+    Single GPTNeo Decoder Block with Multi-Head Latent Attention
 
     Uses pre-normalization (LayerNorm before sub-layers) for better training stability.
 
     Args:
         hidden_size: Model dimension (d_model)
-        num_heads: Number of query heads (K and V are shared)
+        num_heads: Number of attention heads
+        d_c: Latent compression dimension
+        d_rope: RoPE dimension
         intermediate_size: Feed-forward hidden dimension
+        max_seq_len: Maximum sequence length
         dropout: Dropout probability
-
-    Shape:
-        - Input: (batch, seq_len, hidden_size)
-        - Output: (batch, seq_len, hidden_size)
     """
 
-    def __init__(self, hidden_size, num_heads, intermediate_size, dropout=0.1,
-                 position_embedding_type="learned", max_seq_len=256):
+    def __init__(self, hidden_size, num_heads, d_c, d_rope, intermediate_size,
+                 max_seq_len=256, dropout=0.1):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
@@ -62,11 +54,14 @@ class GPTNeoBlock(nn.Module):
         self.ln_1 = LayerNorm(hidden_size)
         self.ln_2 = LayerNorm(hidden_size)
 
-        # Causal multi-query attention (MQA)
-        self.attn = MultiQueryAttention(
-            num_heads, hidden_size, dropout,
-            position_embedding_type=position_embedding_type,
-            max_seq_len=max_seq_len
+        # Multi-Head Latent Attention
+        self.attn = MultiHeadLatentAttention(
+            h=num_heads,
+            d_model=hidden_size,
+            d_c=d_c,
+            d_rope=d_rope,
+            max_seq_len=max_seq_len,
+            dropout=dropout
         )
 
         # Position-wise feed-forward network
@@ -80,11 +75,11 @@ class GPTNeoBlock(nn.Module):
         Forward pass through decoder block
 
         Args:
-            x: (batch, seq_len, hidden_size) - Input tensor
-            mask: (batch, seq_len, seq_len) - Optional causal attention mask
+            x: (batch, seq_len, hidden_size)
+            mask: Optional causal attention mask
 
         Returns:
-            output: (batch, seq_len, hidden_size) - Block output
+            output: (batch, seq_len, hidden_size)
         """
         # Self-attention with pre-norm and residual
         attn_input = self.ln_1(x)
@@ -101,36 +96,34 @@ class GPTNeoBlock(nn.Module):
 
 class GPTNeoModel(nn.Module):
     """
-    GPTNeo Decoder-Only Transformer Model with Multi-Query Attention
+    GPTNeo Decoder-Only Transformer Model with Multi-Head Latent Attention
 
-    Stack of N decoder blocks with token and positional embeddings.
-    Core model without the language modeling head.
+    No position embeddings - RoPE is built into MLA.
 
     Args:
         vocab_size: Size of vocabulary
         hidden_size: Model dimension
         num_layers: Number of decoder blocks
-        num_heads: Number of query heads per block (K and V are shared)
+        num_heads: Number of attention heads
+        d_c: Latent compression dimension
+        d_rope: RoPE dimension
         intermediate_size: Feed-forward hidden dimension
         max_position_embeddings: Maximum sequence length
         dropout: Dropout probability
-
-    Shape:
-        - Input: (batch, seq_len) - Token IDs
-        - Output: (batch, seq_len, hidden_size) - Hidden states
     """
 
     def __init__(
         self,
         vocab_size,
-        hidden_size=768,
-        num_layers=8,
-        num_heads=12,
-        intermediate_size=3072,
-        max_position_embeddings=512,
+        hidden_size=256,
+        num_layers=4,
+        num_heads=8,
+        d_c=128,
+        d_rope=16,
+        intermediate_size=1024,
+        max_position_embeddings=256,
         dropout=0.2,
-        layer_norm_epsilon=1e-5,
-        position_embedding_type="learned"
+        layer_norm_epsilon=1e-5
     ):
         super().__init__()
 
@@ -138,24 +131,22 @@ class GPTNeoModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_heads = num_heads
+        self.d_c = d_c
+        self.d_rope = d_rope
         self.max_position_embeddings = max_position_embeddings
-        self.position_embedding_type = position_embedding_type
 
-        # Token embeddings
+        # Token embeddings only (RoPE inside attention - no position embedding)
         self.token_embedding = nn.Embedding(vocab_size, hidden_size)
-
-        # Learned positional embeddings (like GPT-2) - only when not using RoPE
-        if position_embedding_type != "rope":
-            self.position_embedding = nn.Embedding(max_position_embeddings, hidden_size)
 
         # Dropout after embeddings
         self.dropout = nn.Dropout(dropout)
 
         # Stack of decoder blocks
         self.blocks = nn.ModuleList([
-            GPTNeoBlock(hidden_size, num_heads, intermediate_size, dropout,
-                        position_embedding_type=position_embedding_type,
-                        max_seq_len=max_position_embeddings)
+            GPTNeoBlock(
+                hidden_size, num_heads, d_c, d_rope,
+                intermediate_size, max_position_embeddings, dropout
+            )
             for _ in range(num_layers)
         ])
 
@@ -181,25 +172,16 @@ class GPTNeoModel(nn.Module):
 
         Args:
             input_ids: (batch, seq_len) - Input token IDs
-            attention_mask: (batch, seq_len, seq_len) - Optional attention mask
+            attention_mask: Optional attention mask
 
         Returns:
-            hidden_states: (batch, seq_len, hidden_size) - Final hidden states
+            hidden_states: (batch, seq_len, hidden_size)
         """
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
 
-        # Get token embeddings
-        token_embeds = self.token_embedding(input_ids)
-
-        if self.position_embedding_type == "rope":
-            hidden_states = token_embeds
-        else:
-            position_ids = torch.arange(0, seq_len, dtype=torch.long, device=device)
-            position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_len)
-            position_embeds = self.position_embedding(position_ids)
-            hidden_states = token_embeds + position_embeds
-
+        # Token embeddings only (no position embeddings - RoPE is inside attention)
+        hidden_states = self.token_embedding(input_ids)
         hidden_states = self.dropout(hidden_states)
 
         # Create causal mask if not provided
@@ -218,75 +200,70 @@ class GPTNeoModel(nn.Module):
 
 class GPTNeoForCausalLM(nn.Module):
     """
-    GPTNeo Model with Language Modeling Head and Multi-Query Attention
+    GPTNeo Model with Language Modeling Head and Multi-Head Latent Attention
 
     Full model for causal language modeling (next-token prediction).
-    Adds a linear projection layer to convert hidden states to vocabulary logits.
 
     Args:
         vocab_size: Size of vocabulary
-        hidden_size: Model dimension (default: 768)
-        num_layers: Number of decoder blocks (default: 8)
-        num_heads: Number of query heads (default: 12)
-        intermediate_size: Feed-forward dimension (default: 3072)
-        max_position_embeddings: Maximum sequence length (default: 512)
-        dropout: Dropout probability (default: 0.2)
-
-    Shape:
-        - Input: (batch, seq_len) - Token IDs
-        - Output: (batch, seq_len, vocab_size) - Logits for next token
-
-    Example:
-        >>> model = GPTNeoForCausalLM(vocab_size=50257)
-        >>> input_ids = torch.randint(0, 50257, (2, 128))
-        >>> logits = model(input_ids)
-        >>> print(logits.shape)  # torch.Size([2, 128, 50257])
+        hidden_size: Model dimension
+        num_layers: Number of decoder blocks
+        num_heads: Number of attention heads
+        d_c: Latent compression dimension
+        d_rope: RoPE dimension
+        intermediate_size: Feed-forward dimension
+        max_position_embeddings: Maximum sequence length
+        dropout: Dropout probability
     """
 
     def __init__(
         self,
         vocab_size,
-        hidden_size=768,
-        num_layers=8,
-        num_heads=12,
-        intermediate_size=3072,
-        max_position_embeddings=512,
+        hidden_size=256,
+        num_layers=4,
+        num_heads=8,
+        d_c=128,
+        d_rope=16,
+        intermediate_size=1024,
+        max_position_embeddings=256,
         dropout=0.2,
-        layer_norm_epsilon=1e-5,
-        position_embedding_type="learned"
+        layer_norm_epsilon=1e-5
     ):
         super().__init__()
 
-        # Core GPTNeo model with MQA
+        # Core GPTNeo model with MLA
         self.transformer = GPTNeoModel(
             vocab_size=vocab_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             num_heads=num_heads,
+            d_c=d_c,
+            d_rope=d_rope,
             intermediate_size=intermediate_size,
             max_position_embeddings=max_position_embeddings,
             dropout=dropout,
-            layer_norm_epsilon=layer_norm_epsilon,
-            position_embedding_type=position_embedding_type
+            layer_norm_epsilon=layer_norm_epsilon
         )
 
-        # Language modeling head (projects hidden states to vocabulary)
+        # Language modeling head
         self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
 
-        # Tie weights between token embeddings and lm_head (standard practice)
+        # Tie weights
         self.lm_head.weight = self.transformer.token_embedding.weight
 
-        # Store config for easy access
+        # Store config
         self.config = {
             'vocab_size': vocab_size,
             'hidden_size': hidden_size,
             'num_layers': num_layers,
             'num_heads': num_heads,
+            'd_c': d_c,
+            'd_rope': d_rope,
             'intermediate_size': intermediate_size,
             'max_position_embeddings': max_position_embeddings,
             'dropout': dropout,
             'layer_norm_epsilon': layer_norm_epsilon,
-            'position_embedding_type': position_embedding_type
+            'position_embedding_type': 'rope'
         }
 
     def forward(self, input_ids, attention_mask=None, labels=None):
@@ -295,35 +272,26 @@ class GPTNeoForCausalLM(nn.Module):
 
         Args:
             input_ids: (batch, seq_len) - Input token IDs
-            attention_mask: (batch, seq_len, seq_len) - Optional attention mask
-            labels: (batch, seq_len) - Optional labels for loss computation
+            attention_mask: Optional attention mask
+            labels: Optional labels for loss computation
 
         Returns:
-            if labels is None:
-                logits: (batch, seq_len, vocab_size) - Next token logits
-            else:
-                (loss, logits): Loss and logits tuple
+            if labels is None: logits
+            else: (loss, logits)
         """
-        # Get hidden states from transformer
         hidden_states = self.transformer(input_ids, attention_mask)
-
-        # Project to vocabulary
         logits = self.lm_head(hidden_states)
 
-        # Compute loss if labels provided
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
 
-            # Flatten for cross entropy
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_labels.view(-1)
             )
-
             return loss, logits
 
         return logits
@@ -343,10 +311,10 @@ class GPTNeoForCausalLM(nn.Module):
         Args:
             input_ids: (batch, seq_len) - Input prompt token IDs
             max_length: Maximum generation length
-            temperature: Sampling temperature (higher = more random)
-            top_k: Keep only top k tokens for sampling (0 = no filtering)
-            top_p: Nucleus sampling threshold (1.0 = no filtering)
-            repetition_penalty: Penalty for repeating tokens (1.0 = no penalty)
+            temperature: Sampling temperature
+            top_k: Keep only top k tokens for sampling
+            top_p: Nucleus sampling threshold
+            repetition_penalty: Penalty for repeating tokens
 
         Returns:
             generated_ids: (batch, max_length) - Generated token IDs
@@ -359,7 +327,6 @@ class GPTNeoForCausalLM(nn.Module):
 
         with torch.no_grad():
             for _ in range(max_length - input_ids.size(1)):
-                # Get logits for next token
                 logits = self.forward(generated)
                 next_token_logits = logits[:, -1, :] / temperature
 
@@ -379,7 +346,6 @@ class GPTNeoForCausalLM(nn.Module):
                     sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
                     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
 
-                    # Remove tokens with cumulative probability above threshold
                     sorted_indices_to_remove = cumulative_probs > top_p
                     sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
                     sorted_indices_to_remove[..., 0] = 0
@@ -392,10 +358,8 @@ class GPTNeoForCausalLM(nn.Module):
                 probs = F.softmax(next_token_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
 
-                # Append to generated sequence
                 generated = torch.cat([generated, next_token], dim=1)
 
-                # Check if max position embeddings exceeded
                 if generated.size(1) >= self.config['max_position_embeddings']:
                     break
 
@@ -414,8 +378,7 @@ class GPTNeoForCausalLM(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
 
         if non_embedding:
-            if hasattr(self.transformer, 'position_embedding'):
-                n_params -= self.transformer.position_embedding.weight.numel()
+            # MLA has no position_embedding (RoPE is inside attention)
             n_params -= self.transformer.token_embedding.weight.numel()
 
         return n_params
@@ -423,26 +386,131 @@ class GPTNeoForCausalLM(nn.Module):
 
 def create_gptneo_model(config):
     """
-    Factory function to create GPTNeo model with MQA from config dict
+    Factory function to create GPTNeo model with MLA from config dict
 
     Args:
         config: Dictionary with model configuration
 
     Returns:
-        GPTNeoForCausalLM model instance with MQA
+        GPTNeoForCausalLM model instance with MLA
     """
     return GPTNeoForCausalLM(
         vocab_size=config['vocab_size'],
-        hidden_size=config.get('hidden_size', 768),
-        num_layers=config.get('num_layers', 8),
-        num_heads=config.get('num_heads', 12),
-        intermediate_size=config.get('intermediate_size', 3072),
-        max_position_embeddings=config.get('max_position_embeddings', 512),
+        hidden_size=config.get('hidden_size', 256),
+        num_layers=config.get('num_layers', 4),
+        num_heads=config.get('num_heads', 8),
+        d_c=config.get('d_c', 128),
+        d_rope=config.get('d_rope', 16),
+        intermediate_size=config.get('intermediate_size', 1024),
+        max_position_embeddings=config.get('max_position_embeddings', 256),
         dropout=config.get('dropout', 0.2),
-        layer_norm_epsilon=config.get('layer_norm_epsilon', 1e-5),
-        position_embedding_type=config.get('position_embedding_type', 'learned')
+        layer_norm_epsilon=config.get('layer_norm_epsilon', 1e-5)
     )
 
 
 # Alias for compatibility
 GPTNeo = GPTNeoForCausalLM
+
+
+if __name__ == "__main__":
+    print("Testing GPTNeo Decoder-Only Architecture with MLA...")
+    print("=" * 70)
+
+    batch_size = 2
+    seq_len = 128
+    vocab_size = 50257
+    hidden_size = 256
+    num_layers = 4
+    num_heads = 8
+    d_c = 128
+    d_rope = 16
+    intermediate_size = 1024
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    print(f"Device: {device}")
+    print(f"Configuration: batch={batch_size}, seq_len={seq_len}")
+    print(f"Model: hidden={hidden_size}, layers={num_layers}, heads={num_heads}")
+    print(f"MLA: d_c={d_c}, d_rope={d_rope}\n")
+
+    # Test 1: GPTNeoBlock
+    print("1. Testing GPTNeoBlock with MLA...")
+    block = GPTNeoBlock(hidden_size, num_heads, d_c, d_rope, intermediate_size,
+                        max_seq_len=256, dropout=0.1).to(device)
+    x = torch.randn(batch_size, seq_len, hidden_size).to(device)
+    mask = create_causal_mask(seq_len, device)
+    output = block(x, mask)
+    print(f"   Input shape: {x.shape}")
+    print(f"   Output shape: {output.shape}")
+    assert output.shape == x.shape
+    print("   GPTNeoBlock with MLA working correctly")
+
+    # Test 2: Full model
+    print("\n2. Testing GPTNeoForCausalLM with MLA...")
+    model = GPTNeoForCausalLM(
+        vocab_size=vocab_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        d_c=d_c,
+        d_rope=d_rope,
+        intermediate_size=intermediate_size,
+        max_position_embeddings=256,
+        dropout=0.1
+    ).to(device)
+
+    input_ids = torch.randint(0, vocab_size, (batch_size, seq_len)).to(device)
+    logits = model(input_ids)
+    print(f"   Input IDs shape: {input_ids.shape}")
+    print(f"   Logits shape: {logits.shape}")
+    assert logits.shape == (batch_size, seq_len, vocab_size)
+    print("   GPTNeoForCausalLM with MLA working correctly")
+
+    # Test 3: Loss computation
+    print("\n3. Testing Loss Computation...")
+    labels = input_ids.clone()
+    loss, logits = model(input_ids, labels=labels)
+    print(f"   Loss: {loss.item():.4f}")
+    assert loss.item() > 0
+    print("   Loss computation working correctly")
+
+    # Test 4: Parameter counting
+    print("\n4. Parameter Counting...")
+    total_params = model.get_num_params()
+    non_embed_params = model.get_num_params(non_embedding=True)
+    print(f"   Total parameters: {total_params:,}")
+    print(f"   Non-embedding parameters: {non_embed_params:,}")
+    print(f"   Embedding parameters: {total_params - non_embed_params:,}")
+    print("   Parameter counting working correctly")
+
+    # Test 5: Text generation
+    print("\n5. Testing Text Generation...")
+    prompt = torch.randint(0, vocab_size, (1, 10)).to(device)
+    generated = model.generate(prompt, max_length=50, temperature=1.0, top_k=50)
+    print(f"   Prompt shape: {prompt.shape}")
+    print(f"   Generated shape: {generated.shape}")
+    assert generated.size(1) <= 50
+    print("   Text generation working correctly")
+
+    # Test 6: Factory function
+    print("\n6. Testing create_gptneo_model() factory...")
+    config = {
+        'vocab_size': vocab_size,
+        'hidden_size': 256,
+        'num_layers': 4,
+        'num_heads': 8,
+        'd_c': 128,
+        'd_rope': 16,
+        'intermediate_size': 1024,
+        'max_position_embeddings': 256,
+        'dropout': 0.1
+    }
+    factory_model = create_gptneo_model(config).to(device)
+    test_input = torch.randint(0, vocab_size, (1, 32)).to(device)
+    test_output = factory_model(test_input)
+    print(f"   Output shape: {test_output.shape}")
+    print(f"   Parameters: {factory_model.get_num_params():,}")
+    print("   Factory function working correctly")
+
+    print("\n" + "=" * 70)
+    print("All GPTNeo with MLA tests passed!")
+    print("MLA architecture ready for training!")

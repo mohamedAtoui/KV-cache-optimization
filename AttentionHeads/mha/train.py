@@ -51,7 +51,7 @@ class GPTNeoTrainer:
         - Text generation evaluation
     """
 
-    def __init__(self, config, device='cuda'):
+    def __init__(self, config, device='cuda', model=None):
         self.config = config
         self.device = device if torch.cuda.is_available() else 'cpu'
 
@@ -71,8 +71,11 @@ class GPTNeoTrainer:
         # Set random seed
         set_seed(config['random_seed'])
 
-        # Initialize model
-        self.model = self._build_model()
+        # Initialize model (use provided model or build from config)
+        if model is not None:
+            self.model = model
+        else:
+            self.model = self._build_model()
         self.model.to(self.device)
 
         # Count parameters
@@ -117,7 +120,7 @@ class GPTNeoTrainer:
         return model
 
     def _build_data_module(self):
-        """Build data module for TinyStories"""
+        """Build data module for TinyStories or SimpleStories"""
         data_cfg = self.config['data']
         train_cfg = self.config['training']
 
@@ -129,7 +132,9 @@ class GPTNeoTrainer:
             'batch_size': train_cfg['batch_size'],
             'max_seq_length': train_cfg['max_seq_length'],
             'num_workers': data_cfg['num_workers'],
-            'pin_memory': data_cfg['pin_memory']
+            'pin_memory': data_cfg['pin_memory'],
+            'text_column': data_cfg.get('text_column', 'text'),
+            'val_split': data_cfg.get('val_split', 'validation')
         }
         return TinyStoriesDataModule(combined_config)
 

@@ -21,6 +21,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+from AttentionHeads.mha.rope import precompute_freqs_cis, apply_rotary_emb
+
 
 def attention(query, key, value, mask=None, dropout=None):
     """
@@ -95,7 +97,8 @@ class GroupedQueryAttention(nn.Module):
         - Output: (batch, seq_len, d_model)
     """
 
-    def __init__(self, h, d_model, num_kv_heads=None, dropout=0.1):
+    def __init__(self, h, d_model, num_kv_heads=None, dropout=0.1,
+                 position_embedding_type="learned", max_seq_len=256):
         """Initialize grouped query attention module"""
         super(GroupedQueryAttention, self).__init__()
         assert d_model % h == 0, "d_model must be divisible by h"
@@ -104,6 +107,7 @@ class GroupedQueryAttention(nn.Module):
         self.d_k = d_model // h
         self.h = h  # Number of query heads
         self.d_model = d_model
+        self.position_embedding_type = position_embedding_type
 
         # Default num_kv_heads to h//2 if not specified (a reasonable middle ground)
         if num_kv_heads is None:
@@ -122,6 +126,12 @@ class GroupedQueryAttention(nn.Module):
 
         self.attn = None  # Store attention weights for visualization
         self.dropout = nn.Dropout(p=dropout)
+
+        # RoPE support
+        if position_embedding_type == "rope":
+            cos, sin = precompute_freqs_cis(self.d_k, max_seq_len)
+            self.register_buffer("rope_cos", cos)
+            self.register_buffer("rope_sin", sin)
 
     def forward(self, query, key, value, mask=None):
         """
@@ -154,6 +164,13 @@ class GroupedQueryAttention(nn.Module):
         # V: (batch, seq_len_v, d_model) -> (batch, num_kv_heads, seq_len_v, d_k)
         k = self.k_projection(key).view(nbatches, seq_len_k, self.num_kv_heads, self.d_k).transpose(1, 2)
         v = self.v_projection(value).view(nbatches, -1, self.num_kv_heads, self.d_k).transpose(1, 2)
+
+        # Apply RoPE to Q and K before expanding (before repeat_interleave)
+        if self.position_embedding_type == "rope":
+            cos = self.rope_cos[:seq_len_q].unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, d_k)
+            sin = self.rope_sin[:seq_len_q].unsqueeze(0).unsqueeze(0)
+            q = apply_rotary_emb(q, cos, sin)
+            k = apply_rotary_emb(k, cos, sin)
 
         # 3) Expand K, V to match query heads by repeating each KV head
         # K, V: (batch, num_kv_heads, seq_len, d_k) -> (batch, h, seq_len, d_k)

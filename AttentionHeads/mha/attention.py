@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+from .rope import precompute_freqs_cis, apply_rotary_emb
+
 
 def attention(query, key, value, mask=None, dropout=None):
     """
@@ -88,7 +90,7 @@ class MultiHeadedAttention(nn.Module):
         - Output: (batch, seq_len, d_model)
     """
 
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_model, dropout=0.1, position_embedding_type="learned", max_seq_len=256):
         """Initialize multi-head attention module"""
         super(MultiHeadedAttention, self).__init__()
         assert d_model % h == 0, "d_model must be divisible by h"
@@ -96,6 +98,7 @@ class MultiHeadedAttention(nn.Module):
         # We assume d_v always equals d_k
         self.d_k = d_model // h
         self.h = h
+        self.position_embedding_type = position_embedding_type
 
         # Create 4 linear layers: Q, K, V projections and output projection
         # Using ModuleList for cleaner code (Harvard NLP approach)
@@ -105,6 +108,12 @@ class MultiHeadedAttention(nn.Module):
 
         self.attn = None  # Store attention weights for visualization
         self.dropout = nn.Dropout(p=dropout)
+
+        # RoPE support
+        if position_embedding_type == "rope":
+            cos, sin = precompute_freqs_cis(self.d_k, max_seq_len)
+            self.register_buffer("rope_cos", cos)
+            self.register_buffer("rope_sin", sin)
 
     def forward(self, query, key, value, mask=None):
         """
@@ -132,6 +141,14 @@ class MultiHeadedAttention(nn.Module):
             lin(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
             for lin, x in zip(self.linears, (query, key, value))
         ]
+
+        # Apply RoPE to Q and K if configured
+        if self.position_embedding_type == "rope":
+            seq_len = query.size(2)
+            cos = self.rope_cos[:seq_len].unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, d_k)
+            sin = self.rope_sin[:seq_len].unsqueeze(0).unsqueeze(0)
+            query = apply_rotary_emb(query, cos, sin)
+            key = apply_rotary_emb(key, cos, sin)
 
         # 2) Apply attention on all the projected vectors in batch
         # x shape: (batch, h, seq_len_q, d_k)
