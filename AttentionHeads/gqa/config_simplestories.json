@@ -1,26 +1,26 @@
 {
-  "model_name": "gptneo_gqa2_tinystories",
+  "model_name": "gptneo_gqa4_simplestories",
   "architecture": "gpt_neo_gqa",
-  "description": "GPTNeo decoder-only transformer with Grouped Query Attention (num_kv_heads=2) for TinyStories dataset",
+  "description": "GPTNeo decoder-only transformer with GQA (num_kv_heads=4) for SimpleStories dataset",
 
   "model": {
     "vocab_size": 50257,
     "hidden_size": 256,
     "num_layers": 4,
     "num_heads": 8,
-    "num_kv_heads": 2,
+    "num_kv_heads": 4,
     "intermediate_size": 1024,
     "max_position_embeddings": 256,
     "dropout": 0.2,
+    "position_embedding_type": "rope",
     "activation": "gelu",
     "layer_norm_epsilon": 1e-5,
     "initializer_range": 0.02,
-    "position_embedding_type": "rope",
     "tie_word_embeddings": true
   },
 
   "training": {
-    "dataset": "tinystories",
+    "dataset": "simplestories",
     "train_samples": 30000,
     "val_samples": 5000,
     "batch_size": 64,
@@ -43,9 +43,10 @@
 
   "data": {
     "tokenizer": "gpt2",
-    "dataset_name": "roneneldan/TinyStories",
+    "dataset_name": "SimpleStories/SimpleStories",
     "dataset_config": "default",
-    "text_column": "text",
+    "text_column": "story",
+    "val_split": "test",
     "streaming": false,
     "num_workers": 4,
     "prefetch_factor": 2,
@@ -53,15 +54,15 @@
   },
 
   "logging": {
-    "log_dir": "../logs/gptneo_gqa2_tinystories",
-    "checkpoint_dir": "../checkpoints/gptneo_gqa2_tinystories",
+    "log_dir": "../logs/gptneo_gqa4_simplestories",
+    "checkpoint_dir": "../checkpoints/gptneo_gqa4_simplestories",
     "save_every_steps": 2000,
     "eval_every_steps": 1000,
     "log_every_steps": 50,
     "use_tensorboard": true,
     "use_wandb": false,
-    "project_name": "gptneo-gqa-tinystories",
-    "run_name": "gptneo_gqa2_256_4l_l4"
+    "project_name": "gptneo-gqa-simplestories",
+    "run_name": "gptneo_gqa4_256_4l_ss"
   },
 
   "evaluation": {
@@ -97,16 +98,5 @@
     "resume_from_checkpoint": null
   },
 
-  "random_seed": 42,
-
-  "notes": {
-    "attention_type": "Grouped Query Attention (GQA) with num_kv_heads=2",
-    "gqa_config": "8 query heads, 2 KV heads (4 query heads share each KV head)",
-    "expected_params": "~9.8M parameters (between MQA and MHA)",
-    "expected_training_time": "~40-55 mins on L4",
-    "expected_train_ppl": "20-35",
-    "expected_val_ppl": "25-45",
-    "dataset_source": "TinyStories paper (Eldan & Li, 2023)",
-    "gqa_benefits": "Better quality than MQA, smaller KV cache than MHA, good quality-efficiency tradeoff"
-  }
+  "random_seed": 42
 }

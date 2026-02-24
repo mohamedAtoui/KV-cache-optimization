@@ -32,17 +32,20 @@ class TinyStoriesDataset(Dataset):
         tokenizer_name='gpt2',
         max_seq_length=512,
         num_samples=None,
-        dataset_name='roneneldan/TinyStories'
+        dataset_name='roneneldan/TinyStories',
+        text_column='text'
     ):
         """
         Args:
-            split: 'train' or 'validation'
+            split: 'train' or 'validation' (or 'test' for SimpleStories)
             tokenizer_name: HuggingFace tokenizer name
             max_seq_length: Maximum sequence length
             num_samples: Number of samples to use (None = use all)
             dataset_name: HuggingFace dataset name
+            text_column: Column name containing text ('text' for TinyStories, 'story' for SimpleStories)
         """
         self.max_seq_length = max_seq_length
+        self.text_column = text_column
         self.tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_name)
 
         # Set pad token to eos token (GPT-2 doesn't have pad token)
@@ -50,7 +53,8 @@ class TinyStoriesDataset(Dataset):
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         # Load dataset from HuggingFace
-        print(f"Loading TinyStories dataset (split={split})...")
+        dataset_short_name = dataset_name.split('/')[-1]
+        print(f"Loading {dataset_short_name} dataset (split={split})...")
         self.dataset = load_dataset(dataset_name, split=split)
 
         # Sample if requested
@@ -71,8 +75,8 @@ class TinyStoriesDataset(Dataset):
                 - input_ids: (seq_len,) - Token IDs
                 - attention_mask: (seq_len,) - Attention mask
         """
-        # Get story text
-        story = self.dataset[idx]['text']
+        # Get story text (supports different column names)
+        story = self.dataset[idx][self.text_column]
 
         # Tokenize with truncation
         encoding = self.tokenizer(
@@ -121,6 +125,8 @@ class TinyStoriesDataModule:
         self.max_seq_length = config.get('max_seq_length', 512)
         self.num_workers = config.get('num_workers', 4)
         self.pin_memory = config.get('pin_memory', True)
+        self.text_column = config.get('text_column', 'text')
+        self.val_split = config.get('val_split', 'validation')
 
         # Load tokenizer
         self.tokenizer = GPT2Tokenizer.from_pretrained(self.tokenizer_name)
@@ -133,8 +139,9 @@ class TinyStoriesDataModule:
 
     def setup(self):
         """Load and prepare datasets"""
+        dataset_short_name = self.dataset_name.split('/')[-1]
         print("\n" + "=" * 70)
-        print("Setting up TinyStories datasets...")
+        print(f"Setting up {dataset_short_name} datasets...")
         print("=" * 70)
 
         # Create train dataset
@@ -143,16 +150,18 @@ class TinyStoriesDataModule:
             tokenizer_name=self.tokenizer_name,
             max_seq_length=self.max_seq_length,
             num_samples=self.train_samples,
-            dataset_name=self.dataset_name
+            dataset_name=self.dataset_name,
+            text_column=self.text_column
         )
 
         # Create validation dataset
         self.val_dataset = TinyStoriesDataset(
-            split='validation',
+            split=self.val_split,
             tokenizer_name=self.tokenizer_name,
             max_seq_length=self.max_seq_length,
             num_samples=self.val_samples,
-            dataset_name=self.dataset_name
+            dataset_name=self.dataset_name,
+            text_column=self.text_column
         )
 
         print(f"\nDataset Summary:")

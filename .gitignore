@@ -112,3 +112,8 @@ QUICKSTART.md
 CLEANING_SUMMARY.md
 ARCHITECTURE.md
 
+best_model_gqa_ss_50pct.pt
+best_model_mla_ss_50pct.pt
+best_model_mqa_ss_50pct.pt
+best_model_mha_ss_50pct.pt  
+

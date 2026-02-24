@@ -50,7 +50,8 @@ class GPTNeoBlock(nn.Module):
         - Output: (batch, seq_len, hidden_size)
     """
 
-    def __init__(self, hidden_size, num_heads, intermediate_size, dropout=0.1):
+    def __init__(self, hidden_size, num_heads, intermediate_size, dropout=0.1,
+                 position_embedding_type="learned", max_seq_len=256):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_heads = num_heads
@@ -60,7 +61,11 @@ class GPTNeoBlock(nn.Module):
         self.ln_2 = LayerNorm(hidden_size)
 
         # Causal self-attention
-        self.attn = MultiHeadedAttention(num_heads, hidden_size, dropout)
+        self.attn = MultiHeadedAttention(
+            num_heads, hidden_size, dropout,
+            position_embedding_type=position_embedding_type,
+            max_seq_len=max_seq_len
+        )
 
         # Position-wise feed-forward network
         self.ffn = PositionwiseFeedForward(hidden_size, intermediate_size, dropout)
@@ -122,7 +127,8 @@ class GPTNeoModel(nn.Module):
         intermediate_size=3072,
         max_position_embeddings=512,
         dropout=0.2,
-        layer_norm_epsilon=1e-5
+        layer_norm_epsilon=1e-5,
+        position_embedding_type="learned"
     ):
         super().__init__()
 
@@ -131,19 +137,23 @@ class GPTNeoModel(nn.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.max_position_embeddings = max_position_embeddings
+        self.position_embedding_type = position_embedding_type
 
         # Token embeddings
         self.token_embedding = nn.Embedding(vocab_size, hidden_size)
 
-        # Learned positional embeddings (like GPT-2)
-        self.position_embedding = nn.Embedding(max_position_embeddings, hidden_size)
+        # Learned positional embeddings (like GPT-2) - only when not using RoPE
+        if position_embedding_type != "rope":
+            self.position_embedding = nn.Embedding(max_position_embeddings, hidden_size)
 
         # Dropout after embeddings
         self.dropout = nn.Dropout(dropout)
 
         # Stack of decoder blocks
         self.blocks = nn.ModuleList([
-            GPTNeoBlock(hidden_size, num_heads, intermediate_size, dropout)
+            GPTNeoBlock(hidden_size, num_heads, intermediate_size, dropout,
+                        position_embedding_type=position_embedding_type,
+                        max_seq_len=max_position_embeddings)
             for _ in range(num_layers)
         ])
 
@@ -177,16 +187,19 @@ class GPTNeoModel(nn.Module):
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
 
-        # Create position IDs
-        position_ids = torch.arange(0, seq_len, dtype=torch.long, device=device)
-        position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_len)
-
-        # Get embeddings
+        # Get token embeddings
         token_embeds = self.token_embedding(input_ids)
-        position_embeds = self.position_embedding(position_ids)
 
-        # Combine embeddings
-        hidden_states = token_embeds + position_embeds
+        if self.position_embedding_type == "rope":
+            # RoPE: position info is applied inside attention, no additive PE
+            hidden_states = token_embeds
+        else:
+            # Learned positional embeddings (like GPT-2)
+            position_ids = torch.arange(0, seq_len, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0).expand(batch_size, seq_len)
+            position_embeds = self.position_embedding(position_ids)
+            hidden_states = token_embeds + position_embeds
+
         hidden_states = self.dropout(hidden_states)
 
         # Create causal mask if not provided
@@ -239,7 +252,8 @@ class GPTNeoForCausalLM(nn.Module):
         intermediate_size=3072,
         max_position_embeddings=512,
         dropout=0.2,
-        layer_norm_epsilon=1e-5
+        layer_norm_epsilon=1e-5,
+        position_embedding_type="learned"
     ):
         super().__init__()
 
@@ -252,7 +266,8 @@ class GPTNeoForCausalLM(nn.Module):
             intermediate_size=intermediate_size,
             max_position_embeddings=max_position_embeddings,
             dropout=dropout,
-            layer_norm_epsilon=layer_norm_epsilon
+            layer_norm_epsilon=layer_norm_epsilon,
+            position_embedding_type=position_embedding_type
         )
 
         # Language modeling head (projects hidden states to vocabulary)
@@ -270,7 +285,8 @@ class GPTNeoForCausalLM(nn.Module):
             'intermediate_size': intermediate_size,
             'max_position_embeddings': max_position_embeddings,
             'dropout': dropout,
-            'layer_norm_epsilon': layer_norm_epsilon
+            'layer_norm_epsilon': layer_norm_epsilon,
+            'position_embedding_type': position_embedding_type
         }
 
     def forward(self, input_ids, attention_mask=None, labels=None):
@@ -398,7 +414,8 @@ class GPTNeoForCausalLM(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
 
         if non_embedding:
-            n_params -= self.transformer.position_embedding.weight.numel()
+            if hasattr(self.transformer, 'position_embedding'):
+                n_params -= self.transformer.position_embedding.weight.numel()
             n_params -= self.transformer.token_embedding.weight.numel()
 
         return n_params
@@ -433,7 +450,8 @@ def create_gptneo_model(config):
         intermediate_size=config.get('intermediate_size', 3072),
         max_position_embeddings=config.get('max_position_embeddings', 512),
         dropout=config.get('dropout', 0.2),
-        layer_norm_epsilon=config.get('layer_norm_epsilon', 1e-5)
+        layer_norm_epsilon=config.get('layer_norm_epsilon', 1e-5),
+        position_embedding_type=config.get('position_embedding_type', 'learned')
     )
 
 

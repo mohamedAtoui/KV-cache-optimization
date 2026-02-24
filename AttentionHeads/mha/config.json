@@ -11,6 +11,7 @@
     "intermediate_size": 1024,
     "max_position_embeddings": 256,
     "dropout": 0.2,
+    "position_embedding_type": "rope",
     "activation": "gelu",
     "layer_norm_epsilon": 1e-5,
     "initializer_range": 0.02,
