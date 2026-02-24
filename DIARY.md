@@ -210,4 +210,44 @@ Key difference from MQA/GQA: Instead of reducing the number of KV heads, MLA com
 DeepSeek-V2 reports MLA achieves better performance than MHA while using less cache than even GQA.
 
 
+# Week 13:
+
+### 📅 Day 15: February 17th – Unified Comparison: All 4 Attention Mechanisms
+
+Trained all 4 attention mechanisms (MHA, MQA, GQA-4, MLA) on both TinyStories and SimpleStories datasets (50% each: 30K train / 5K val samples). Same architecture across all runs: GPT-Neo backbone, 4 layers, 8 heads, 256 hidden dim, ~16M parameters, RoPE positional encoding, 6000 training steps.
+
+#### Metrics evaluated:
+
+- **Validation Perplexity**: how surprised the model is by unseen text (lower = better)
+- **Top-k Accuracy**: % of time the correct next token is in the model's top 1/5/10 predictions
+- **KV-Cache Size**: memory needed to store keys/values per token during generation
+- **FLOPs per Token**: floating-point operations measuring computational cost of each attention mechanism
+- **Arithmetic Intensity**: ratio of FLOPs to memory bytes (higher = more compute-efficient, less memory-bound)
+- **Inference Speed**: tokens/second at different sequence lengths (64, 128, 256)
+- **Peak GPU Memory**: max VRAM usage during generation
+- **Attention Entropy**: how spread out attention is (high = diffuse, low = focused/peaky)
+- **Attention Heatmaps**: visual inspection of where each head attends
+- **Generation Diversity**: Distinct-n (unique n-gram ratios) and repetition rate
+- **Dataset Sensitivity**: how rankings change across TinyStories vs SimpleStories
+
+
+# Week 14:
+
+### 📅 Day 16: February 24th – Findings and What May Have Gone Wrong
+
+#### Key findings:
+
+- **MLA wins on quality**: best perplexity on both datasets (~60 TinyStories, ~174 SimpleStories): ~13% and ~26% better than MHA respectively
+- **MLA wins on efficiency tradeoff**: 72% KV-cache reduction (144 vs 512 values/token/layer) with same parameter count (~16M)
+- **MLA's sharper attention**: lower entropy at Layer 0 (~2.1 vs ~2.8) suggests the low-rank bottleneck forces more selective attention
+- **MQA/GQA matched MHA closely**: at this small scale, no significant quality degradation from head sharing
+
+#### Things that may have gone wrong / limitations:
+
+- **Model too small (~16M params)**: memory-bandwidth savings don't show in inference speed: all models ~40-44K tok/s
+- **SimpleStories perplexities all high (174-236)**: dataset is harder, and 50% data + 6000 steps may be insufficient
+- **MLA repetition rate anomaly on SimpleStories**: +84% higher than MHA, contradicts its better perplexity
+- **MLA ~9% slower at inference**: the extra up-projection cost dominates when not memory-bound
+
+
 
