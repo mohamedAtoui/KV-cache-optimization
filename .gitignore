@@ -102,6 +102,18 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
-/data_processed
-/DIARY.md
+/data_processed/wikitext2_processed
+/data_processed/wikitext103_processed
+
+
+# Documentation files (auto-generated/temporary)
+TRAINING_RESULTS.md
+QUICKSTART.md
+CLEANING_SUMMARY.md
+ARCHITECTURE.md
+
+best_model_gqa_ss_50pct.pt
+best_model_mla_ss_50pct.pt
+best_model_mqa_ss_50pct.pt
+best_model_mha_ss_50pct.pt  
 
