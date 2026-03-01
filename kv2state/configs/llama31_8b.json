@@ -1,0 +1,26 @@
+{
+    "model_name": "meta-llama/Llama-3.1-8B-Instruct",
+    "num_layers": 32,
+    "num_attention_heads": 32,
+    "num_kv_heads": 8,
+    "head_dim": 128,
+    "hidden_size": 4096,
+    "duo_attention_pattern_dir": "duo-attention/attn_patterns/Meta-Llama-3.1-8B-Instruct",
+    "state_config": {
+        "decay_init": 0.99,
+        "learnable_decay": false,
+        "chunk_size": 64
+    },
+    "eval_config": {
+        "dataset": "wikitext",
+        "dataset_config": "wikitext-2-raw-v1",
+        "max_length": 2048,
+        "stride": 512
+    },
+    "notes": {
+        "gqa_ratio": "4 query heads per KV head (32 Q / 8 KV)",
+        "expected_baseline_ppl": "6-7 on WikiText-2",
+        "duo_attention_streaming_fraction": "~50% of KV heads are streaming (Llama-3 GQA)",
+        "go_nogo_threshold": "zero-shot ppl < 3x baseline = GO, > 10x = STOP"
+    }
+}

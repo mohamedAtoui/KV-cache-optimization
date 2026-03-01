@@ -1,0 +1,364 @@
+"""Hybrid attention: monkey-patch Llama attention to use recurrent state for streaming heads.
+
+For each layer, streaming heads (identified by HeadClassification) use a fixed-size
+recurrent state matrix instead of growing KV cache. Retrieval heads keep standard KV cache.
+"""
+
+import logging
+import math
+from typing import Optional
+from dataclasses import dataclass
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from kv2state.head_classifier import HeadClassification
+from kv2state.state_attention import DecayedLinearState, StateCache
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class KV2StateConfig:
+    """Configuration for KV2State hybrid attention."""
+    decay_init: float = 0.99
+    learnable_decay: bool = False  # False for zero-shot, True for calibration
+    chunk_size: int = 64  # Chunk size for parallel prefill of state heads
+
+
+def patch_model_for_kv2state(
+    model: nn.Module,
+    head_classification: HeadClassification,
+    config: Optional[KV2StateConfig] = None,
+) -> tuple[nn.Module, StateCache]:
+    """Monkey-patch a Llama model to use KV2State hybrid attention.
+
+    Replaces the forward method of each LlamaAttention layer to:
+    - Use standard softmax attention + KV cache for retrieval heads
+    - Use decayed linear state for streaming heads
+
+    Args:
+        model: HuggingFace LlamaForCausalLM (or compatible).
+        head_classification: Binary mask from head_classifier.
+        config: KV2State configuration. Uses defaults if None.
+
+    Returns:
+        model: The patched model (modified in-place).
+        state_cache: StateCache object to manage recurrent states.
+    """
+    if config is None:
+        config = KV2StateConfig()
+
+    state_cache = StateCache()
+    mask = head_classification.mask  # [num_layers, num_kv_heads]
+    num_layers = mask.shape[0]
+    num_kv_heads = mask.shape[1]
+
+    model_config = model.config
+    head_dim = model_config.hidden_size // model_config.num_attention_heads
+    num_q_heads = model_config.num_attention_heads
+    num_kv_heads_model = getattr(model_config, "num_key_value_heads", num_q_heads)
+    q_per_kv = num_q_heads // num_kv_heads_model
+
+    assert num_kv_heads == num_kv_heads_model, (
+        f"Head classification has {num_kv_heads} KV heads but model has {num_kv_heads_model}"
+    )
+
+    # Create per-head state modules for streaming heads
+    state_modules = {}
+    for layer_idx in range(num_layers):
+        for head_idx in range(num_kv_heads):
+            if not mask[layer_idx, head_idx]:  # Streaming head
+                state_mod = DecayedLinearState(
+                    head_dim=head_dim,
+                    decay_init=config.decay_init,
+                    learnable_decay=config.learnable_decay,
+                )
+                # Move to same device/dtype as model
+                layer = model.model.layers[layer_idx]
+                device = next(layer.parameters()).device
+                dtype = next(layer.parameters()).dtype
+                state_mod = state_mod.to(device=device, dtype=dtype)
+                state_modules[(layer_idx, head_idx)] = state_mod
+
+    logger.info(f"Created {len(state_modules)} state modules for streaming heads")
+
+    # Patch each attention layer
+    for layer_idx in range(num_layers):
+        layer = model.model.layers[layer_idx]
+        attn = layer.self_attn
+
+        layer_mask = mask[layer_idx]  # [num_kv_heads], True=retrieval
+        layer_state_modules = {
+            h: state_modules[(layer_idx, h)]
+            for h in range(num_kv_heads)
+            if (layer_idx, h) in state_modules
+        }
+
+        if not layer_state_modules:
+            # All heads are retrieval — no patching needed
+            continue
+
+        _patch_attention_layer(
+            attn=attn,
+            layer_idx=layer_idx,
+            layer_mask=layer_mask,
+            state_modules=layer_state_modules,
+            state_cache=state_cache,
+            head_dim=head_dim,
+            num_q_heads=num_q_heads,
+            num_kv_heads=num_kv_heads,
+            q_per_kv=q_per_kv,
+            chunk_size=config.chunk_size,
+        )
+
+    # Store state modules on model so they're included in parameters()
+    model._kv2state_modules = nn.ModuleDict({
+        f"layer{l}_head{h}": mod for (l, h), mod in state_modules.items()
+    })
+    model._kv2state_cache = state_cache
+
+    streaming_heads = head_classification.get_streaming_heads()
+    logger.info(
+        f"Patched {len(streaming_heads)} streaming heads across {num_layers} layers. "
+        f"State memory per token: {len(streaming_heads) * head_dim * head_dim * 2 / 1024:.1f} KB "
+        f"(vs KV cache: O(seq_len) per head)"
+    )
+
+    return model, state_cache
+
+
+def _patch_attention_layer(
+    attn: nn.Module,
+    layer_idx: int,
+    layer_mask: torch.Tensor,
+    state_modules: dict[int, DecayedLinearState],
+    state_cache: StateCache,
+    head_dim: int,
+    num_q_heads: int,
+    num_kv_heads: int,
+    q_per_kv: int,
+    chunk_size: int,
+):
+    """Replace a single LlamaAttention layer's forward with hybrid KV/state attention."""
+
+    original_forward = attn.forward
+
+    def hybrid_forward(
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value=None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]] = None,
+        **kwargs,
+    ):
+        bsz, q_len, hidden_size = hidden_states.shape
+
+        # Project Q, K, V using original weights
+        q = attn.q_proj(hidden_states)
+        k = attn.k_proj(hidden_states)
+        v = attn.v_proj(hidden_states)
+
+        # Reshape: [B, T, num_heads, head_dim] → [B, num_heads, T, head_dim]
+        q = q.view(bsz, q_len, num_q_heads, head_dim).transpose(1, 2)
+        k = k.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)
+        v = v.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)
+
+        # Apply RoPE
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+        else:
+            cos, sin = attn.rotary_emb(v, position_ids)
+        q, k = _apply_rotary_pos_emb(q, k, cos, sin)
+
+        # Split heads into retrieval and streaming groups
+        retrieval_kv_indices = []
+        streaming_kv_indices = []
+        for h in range(num_kv_heads):
+            if layer_mask[h]:
+                retrieval_kv_indices.append(h)
+            else:
+                streaming_kv_indices.append(h)
+
+        # Initialize output tensor
+        # We'll fill in per-head outputs
+        output = torch.zeros(bsz, num_q_heads, q_len, head_dim, dtype=q.dtype, device=q.device)
+
+        # --- Handle retrieval heads (standard KV cache attention) ---
+        if retrieval_kv_indices:
+            ret_k = k[:, retrieval_kv_indices]  # [B, n_ret, T, D]
+            ret_v = v[:, retrieval_kv_indices]
+
+            # Handle KV cache for retrieval heads
+            if past_key_value is not None and hasattr(past_key_value, '_kv2state_retrieval'):
+                past_k, past_v = past_key_value._kv2state_retrieval.get(layer_idx, (None, None))
+                if past_k is not None:
+                    ret_k = torch.cat([past_k, ret_k], dim=2)
+                    ret_v = torch.cat([past_v, ret_v], dim=2)
+            if use_cache:
+                if past_key_value is None:
+                    past_key_value = _SimpleCache()
+                if not hasattr(past_key_value, '_kv2state_retrieval'):
+                    past_key_value._kv2state_retrieval = {}
+                past_key_value._kv2state_retrieval[layer_idx] = (ret_k, ret_v)
+
+            # Expand KV for GQA: repeat each KV head for its query group
+            ret_k_expanded = ret_k.repeat_interleave(q_per_kv, dim=1)  # [B, n_ret*q_per_kv, T_kv, D]
+            ret_v_expanded = ret_v.repeat_interleave(q_per_kv, dim=1)
+
+            # Gather corresponding query heads
+            ret_q_indices = []
+            for kv_idx in retrieval_kv_indices:
+                for qi in range(q_per_kv):
+                    ret_q_indices.append(kv_idx * q_per_kv + qi)
+            ret_q = q[:, ret_q_indices]  # [B, n_ret*q_per_kv, T_q, D]
+
+            # Standard scaled dot-product attention
+            scale = 1.0 / math.sqrt(head_dim)
+            attn_weights = torch.matmul(ret_q, ret_k_expanded.transpose(-2, -1)) * scale
+
+            # Apply causal mask
+            kv_len = ret_k.shape[2]
+            if q_len > 1:  # Prefill
+                causal = torch.triu(
+                    torch.full((q_len, kv_len), float("-inf"), device=q.device, dtype=q.dtype),
+                    diagonal=kv_len - q_len + 1,
+                )
+                attn_weights = attn_weights + causal.unsqueeze(0).unsqueeze(0)
+
+            if attention_mask is not None:
+                # Handle 4D attention mask from transformers
+                if attention_mask.dim() == 4:
+                    # Select only the retrieval head subset
+                    n_ret_q = len(ret_q_indices)
+                    if attention_mask.shape[1] == 1:
+                        mask_slice = attention_mask
+                    else:
+                        mask_slice = attention_mask[:, :n_ret_q]
+                    # Adjust sequence dimension if needed
+                    if mask_slice.shape[-1] >= kv_len:
+                        mask_slice = mask_slice[..., :kv_len]
+                    attn_weights = attn_weights + mask_slice
+
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
+            ret_output = torch.matmul(attn_weights, ret_v_expanded)  # [B, n_ret*q_per_kv, T, D]
+
+            # Place into output tensor
+            for i, q_idx in enumerate(ret_q_indices):
+                output[:, q_idx] = ret_output[:, i]
+
+        # --- Handle streaming heads (recurrent state) ---
+        if streaming_kv_indices:
+            for kv_idx in streaming_kv_indices:
+                state_mod = state_modules[kv_idx]
+                head_k = k[:, kv_idx]  # [B, T, D]
+                head_v = v[:, kv_idx]  # [B, T, D]
+
+                # Get corresponding query heads for this KV head
+                q_start = kv_idx * q_per_kv
+                q_end = q_start + q_per_kv
+
+                if q_len == 1:
+                    # Decoding: single token, use recurrent update
+                    state, z = state_cache.get(layer_idx, kv_idx)
+                    if state is None:
+                        state, z = state_mod.initial_state(bsz, q.dtype, q.device)
+
+                    head_k_sq = head_k.squeeze(1)  # [B, D]
+                    head_v_sq = head_v.squeeze(1)  # [B, D]
+
+                    # Compute output for each query head in the group
+                    for qi in range(q_per_kv):
+                        head_q = q[:, q_start + qi, 0]  # [B, D]
+                        out, new_state, new_z = state_mod.recurrent_forward(
+                            head_q, head_k_sq, head_v_sq, state, z
+                        )
+                        output[:, q_start + qi, 0] = out
+
+                    # Update state (shared across query heads in group)
+                    state_cache.set(layer_idx, kv_idx, new_state, new_z)
+
+                else:
+                    # Prefill: use parallel forward
+                    # Average across query heads in group for state computation,
+                    # but compute output for each query head
+                    state_out, final_state, final_z = state_mod.parallel_forward(
+                        q[:, q_start],  # Use first query head for state
+                        head_k,
+                        head_v,
+                        chunk_size=chunk_size,
+                    )
+
+                    # For GQA, all query heads in a group share K,V
+                    # but have different Q, so we compute separate outputs
+                    for qi in range(q_per_kv):
+                        head_q = q[:, q_start + qi]  # [B, T, D]
+                        qi_out, _, _ = state_mod.parallel_forward(
+                            head_q, head_k, head_v, chunk_size=chunk_size,
+                        )
+                        output[:, q_start + qi] = qi_out
+
+                    state_cache.set(layer_idx, kv_idx, final_state, final_z)
+
+        # Transpose back and project: [B, num_heads, T, D] → [B, T, hidden_size]
+        output = output.transpose(1, 2).contiguous().view(bsz, q_len, hidden_size)
+        output = attn.o_proj(output)
+
+        # Return in expected format
+        if use_cache:
+            return output, None, past_key_value
+        return output, None, None
+
+    # Replace forward method
+    attn.forward = hybrid_forward
+    attn._kv2state_patched = True
+
+
+def _apply_rotary_pos_emb(q, k, cos, sin):
+    """Apply rotary position embeddings to queries and keys."""
+    # cos, sin: [1, 1, seq_len, head_dim] or [B, 1, seq_len, head_dim]
+    # Handle different shapes from different transformers versions
+    if cos.dim() == 2:
+        # [seq_len, head_dim] → [1, 1, seq_len, head_dim]
+        cos = cos.unsqueeze(0).unsqueeze(0)
+        sin = sin.unsqueeze(0).unsqueeze(0)
+    elif cos.dim() == 3:
+        # [B, seq_len, head_dim] → [B, 1, seq_len, head_dim]
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+
+    q_embed = (q * cos) + (_rotate_half(q) * sin)
+    k_embed = (k * cos) + (_rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+def _rotate_half(x):
+    """Rotate half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+class _SimpleCache:
+    """Minimal cache object to store retrieval heads' KV cache."""
+    def __init__(self):
+        self._kv2state_retrieval = {}
+        self.seen_tokens = 0
+
+    def get_seq_length(self, layer_idx=0):
+        if layer_idx in self._kv2state_retrieval:
+            return self._kv2state_retrieval[layer_idx][0].shape[2]
+        return 0
+
+    def get_max_cache_length(self):
+        return None
+
+    def __getitem__(self, idx):
+        return self._kv2state_retrieval.get(idx, (None, None))
+
+    def __len__(self):
+        return len(self._kv2state_retrieval)
