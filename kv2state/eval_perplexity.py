@@ -81,7 +81,7 @@ def evaluate_perplexity(
         target_ids = input_chunk.clone()
         target_ids[:, :-trg_len] = -100
 
-        outputs = model(input_chunk, labels=target_ids)
+        outputs = model(input_chunk, labels=target_ids, use_cache=False)
         neg_log_likelihood = outputs.loss * trg_len  # Un-average the loss
 
         nlls.append(neg_log_likelihood.item())

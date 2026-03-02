@@ -157,7 +157,8 @@ class DecayedLinearState(nn.Module):
 
             # Intra-chunk: causal linear attention
             # A[i,j] = λ^(i-j) * (q_i · k_j) for j <= i
-            decay_matrix = lam ** (positions.unsqueeze(0) - positions.unsqueeze(1)).clamp(min=0)
+            # positions[i] - positions[j] gives i-j (positive for causal j<=i)
+            decay_matrix = lam ** (positions.unsqueeze(1) - positions.unsqueeze(0)).clamp(min=0)
             causal_mask = torch.tril(torch.ones(chunk_size, chunk_size, device=q.device, dtype=q.dtype))
             decay_matrix = decay_matrix * causal_mask  # [C, C]
 

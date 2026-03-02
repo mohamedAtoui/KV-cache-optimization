@@ -163,7 +163,7 @@ def _patch_attention_layer(
         k = attn.k_proj(hidden_states)
         v = attn.v_proj(hidden_states)
 
-        # Reshape: [B, T, num_heads, head_dim] → [B, num_heads, T, head_dim]
+        # Reshape: [B, T, num_heads, head_dim] -> [B, num_heads, T, head_dim]
         q = q.view(bsz, q_len, num_q_heads, head_dim).transpose(1, 2)
         k = k.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)
         v = v.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)
@@ -185,29 +185,15 @@ def _patch_attention_layer(
                 streaming_kv_indices.append(h)
 
         # Initialize output tensor
-        # We'll fill in per-head outputs
         output = torch.zeros(bsz, num_q_heads, q_len, head_dim, dtype=q.dtype, device=q.device)
 
-        # --- Handle retrieval heads (standard KV cache attention) ---
+        # --- Handle retrieval heads (standard softmax attention) ---
         if retrieval_kv_indices:
             ret_k = k[:, retrieval_kv_indices]  # [B, n_ret, T, D]
             ret_v = v[:, retrieval_kv_indices]
 
-            # Handle KV cache for retrieval heads
-            if past_key_value is not None and hasattr(past_key_value, '_kv2state_retrieval'):
-                past_k, past_v = past_key_value._kv2state_retrieval.get(layer_idx, (None, None))
-                if past_k is not None:
-                    ret_k = torch.cat([past_k, ret_k], dim=2)
-                    ret_v = torch.cat([past_v, ret_v], dim=2)
-            if use_cache:
-                if past_key_value is None:
-                    past_key_value = _SimpleCache()
-                if not hasattr(past_key_value, '_kv2state_retrieval'):
-                    past_key_value._kv2state_retrieval = {}
-                past_key_value._kv2state_retrieval[layer_idx] = (ret_k, ret_v)
-
             # Expand KV for GQA: repeat each KV head for its query group
-            ret_k_expanded = ret_k.repeat_interleave(q_per_kv, dim=1)  # [B, n_ret*q_per_kv, T_kv, D]
+            ret_k_expanded = ret_k.repeat_interleave(q_per_kv, dim=1)
             ret_v_expanded = ret_v.repeat_interleave(q_per_kv, dim=1)
 
             # Gather corresponding query heads
@@ -217,35 +203,32 @@ def _patch_attention_layer(
                     ret_q_indices.append(kv_idx * q_per_kv + qi)
             ret_q = q[:, ret_q_indices]  # [B, n_ret*q_per_kv, T_q, D]
 
-            # Standard scaled dot-product attention
+            # Scaled dot-product attention
             scale = 1.0 / math.sqrt(head_dim)
             attn_weights = torch.matmul(ret_q, ret_k_expanded.transpose(-2, -1)) * scale
 
-            # Apply causal mask
+            # Use transformers' pre-computed causal mask if available,
+            # otherwise build our own
             kv_len = ret_k.shape[2]
-            if q_len > 1:  # Prefill
+            if attention_mask is not None and attention_mask.dim() == 4:
+                # attention_mask from transformers already includes causal mask
+                # Shape: [B, 1, T_q, T_kv] — broadcast over heads
+                mask_slice = attention_mask
+                if mask_slice.shape[-1] > kv_len:
+                    mask_slice = mask_slice[..., :kv_len]
+                if mask_slice.shape[-2] > q_len:
+                    mask_slice = mask_slice[..., :q_len, :]
+                attn_weights = attn_weights + mask_slice
+            elif q_len > 1:
+                # Fallback: manual causal mask for prefill
                 causal = torch.triu(
                     torch.full((q_len, kv_len), float("-inf"), device=q.device, dtype=q.dtype),
                     diagonal=kv_len - q_len + 1,
                 )
                 attn_weights = attn_weights + causal.unsqueeze(0).unsqueeze(0)
 
-            if attention_mask is not None:
-                # Handle 4D attention mask from transformers
-                if attention_mask.dim() == 4:
-                    # Select only the retrieval head subset
-                    n_ret_q = len(ret_q_indices)
-                    if attention_mask.shape[1] == 1:
-                        mask_slice = attention_mask
-                    else:
-                        mask_slice = attention_mask[:, :n_ret_q]
-                    # Adjust sequence dimension if needed
-                    if mask_slice.shape[-1] >= kv_len:
-                        mask_slice = mask_slice[..., :kv_len]
-                    attn_weights = attn_weights + mask_slice
-
             attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(q.dtype)
-            ret_output = torch.matmul(attn_weights, ret_v_expanded)  # [B, n_ret*q_per_kv, T, D]
+            ret_output = torch.matmul(attn_weights, ret_v_expanded)
 
             # Place into output tensor
             for i, q_idx in enumerate(ret_q_indices):
@@ -260,7 +243,6 @@ def _patch_attention_layer(
 
                 # Get corresponding query heads for this KV head
                 q_start = kv_idx * q_per_kv
-                q_end = q_start + q_per_kv
 
                 if q_len == 1:
                     # Decoding: single token, use recurrent update
@@ -283,19 +265,16 @@ def _patch_attention_layer(
                     state_cache.set(layer_idx, kv_idx, new_state, new_z)
 
                 else:
-                    # Prefill: use parallel forward
-                    # Average across query heads in group for state computation,
-                    # but compute output for each query head
-                    state_out, final_state, final_z = state_mod.parallel_forward(
-                        q[:, q_start],  # Use first query head for state
-                        head_k,
-                        head_v,
-                        chunk_size=chunk_size,
+                    # Prefill: compute state once, then apply each Q head
+                    # Use parallel_forward with first Q head to get state trajectory
+                    first_q = q[:, q_start]  # [B, T, D]
+                    first_out, final_state, final_z = state_mod.parallel_forward(
+                        first_q, head_k, head_v, chunk_size=chunk_size,
                     )
+                    output[:, q_start] = first_out
 
-                    # For GQA, all query heads in a group share K,V
-                    # but have different Q, so we compute separate outputs
-                    for qi in range(q_per_kv):
+                    # For remaining Q heads in group, reuse the same K,V state
+                    for qi in range(1, q_per_kv):
                         head_q = q[:, q_start + qi]  # [B, T, D]
                         qi_out, _, _ = state_mod.parallel_forward(
                             head_q, head_k, head_v, chunk_size=chunk_size,
@@ -304,15 +283,12 @@ def _patch_attention_layer(
 
                     state_cache.set(layer_idx, kv_idx, final_state, final_z)
 
-        # Transpose back and project: [B, num_heads, T, D] → [B, T, hidden_size]
+        # Transpose back and project: [B, num_heads, T, D] -> [B, T, hidden_size]
         output = output.transpose(1, 2).contiguous().view(bsz, q_len, hidden_size)
         output = attn.o_proj(output)
 
-        # Return in format expected by LlamaDecoderLayer
-        # Newer transformers (4.46+) expects (output, past_key_value)
-        # Older versions expect (output, attn_weights, past_key_value)
-        if use_cache:
-            return output, past_key_value
+        # Return format expected by LlamaDecoderLayer
+        # Newer transformers (4.46+): (output, attn_weights) — 2 values
         return output, None
 
     # Replace forward method
@@ -322,16 +298,16 @@ def _patch_attention_layer(
 
 def _apply_rotary_pos_emb(q, k, cos, sin):
     """Apply rotary position embeddings to queries and keys."""
-    # cos, sin: [1, 1, seq_len, head_dim] or [B, 1, seq_len, head_dim]
-    # Handle different shapes from different transformers versions
+    # Handle different cos/sin shapes from different transformers versions
     if cos.dim() == 2:
-        # [seq_len, head_dim] → [1, 1, seq_len, head_dim]
+        # [seq_len, head_dim] -> [1, 1, seq_len, head_dim]
         cos = cos.unsqueeze(0).unsqueeze(0)
         sin = sin.unsqueeze(0).unsqueeze(0)
     elif cos.dim() == 3:
-        # [B, seq_len, head_dim] → [B, 1, seq_len, head_dim]
+        # [B, seq_len, head_dim] -> [B, 1, seq_len, head_dim]
         cos = cos.unsqueeze(1)
         sin = sin.unsqueeze(1)
+    # dim == 4: already [B, 1, seq_len, head_dim], no change needed
 
     q_embed = (q * cos) + (_rotate_half(q) * sin)
     k_embed = (k * cos) + (_rotate_half(k) * sin)
@@ -343,24 +319,3 @@ def _rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
-
-
-class _SimpleCache:
-    """Minimal cache object to store retrieval heads' KV cache."""
-    def __init__(self):
-        self._kv2state_retrieval = {}
-        self.seen_tokens = 0
-
-    def get_seq_length(self, layer_idx=0):
-        if layer_idx in self._kv2state_retrieval:
-            return self._kv2state_retrieval[layer_idx][0].shape[2]
-        return 0
-
-    def get_max_cache_length(self):
-        return None
-
-    def __getitem__(self, idx):
-        return self._kv2state_retrieval.get(idx, (None, None))
-
-    def __len__(self):
-        return len(self._kv2state_retrieval)
