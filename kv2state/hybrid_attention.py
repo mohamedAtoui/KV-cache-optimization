@@ -308,10 +308,12 @@ def _patch_attention_layer(
         output = output.transpose(1, 2).contiguous().view(bsz, q_len, hidden_size)
         output = attn.o_proj(output)
 
-        # Return in expected format
+        # Return in format expected by LlamaDecoderLayer
+        # Newer transformers (4.46+) expects (output, past_key_value)
+        # Older versions expect (output, attn_weights, past_key_value)
         if use_cache:
-            return output, None, past_key_value
-        return output, None, None
+            return output, past_key_value
+        return output, None
 
     # Replace forward method
     attn.forward = hybrid_forward
