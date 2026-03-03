@@ -5,6 +5,7 @@ Supports both recurrent (token-by-token) and parallel (chunk-wise prefill) modes
 """
 
 import math
+import os
 from typing import Optional
 
 import torch
@@ -200,6 +201,38 @@ class DecayedLinearState(nn.Module):
         output = torch.cat(outputs, dim=1)[:, :T, :]
 
         return output, state, z
+
+    def save_pretrained(self, path: str) -> None:
+        """Save calibrated decay parameters to disk.
+
+        Args:
+            path: Directory to save to. Creates it if needed.
+        """
+        os.makedirs(path, exist_ok=True)
+        torch.save({
+            "head_dim": self.head_dim,
+            "log_decay": self.log_decay.data,
+            "learnable_decay": isinstance(self.log_decay, nn.Parameter),
+        }, os.path.join(path, "decay_state.pt"))
+
+    @classmethod
+    def load_pretrained(cls, path: str) -> "DecayedLinearState":
+        """Load calibrated decay parameters from disk.
+
+        Args:
+            path: Directory containing decay_state.pt.
+
+        Returns:
+            DecayedLinearState with restored parameters.
+        """
+        ckpt = torch.load(os.path.join(path, "decay_state.pt"), map_location="cpu", weights_only=True)
+        mod = cls(
+            head_dim=ckpt["head_dim"],
+            decay_init=0.99,  # placeholder, overwritten below
+            learnable_decay=ckpt["learnable_decay"],
+        )
+        mod.log_decay.data.copy_(ckpt["log_decay"])
+        return mod
 
 
 class StateCache:

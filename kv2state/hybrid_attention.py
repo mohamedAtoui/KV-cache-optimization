@@ -25,6 +25,7 @@ class KV2StateConfig:
     decay_init: float = 0.99
     learnable_decay: bool = False  # False for zero-shot, True for calibration
     chunk_size: int = 64  # Chunk size for parallel prefill of state heads
+    skip_feature_map: bool = False  # True for calibration: pass raw Q/K, only apply decay
 
 
 def patch_model_for_kv2state(
@@ -111,6 +112,7 @@ def patch_model_for_kv2state(
             num_kv_heads=num_kv_heads,
             q_per_kv=q_per_kv,
             chunk_size=config.chunk_size,
+            skip_feature_map=config.skip_feature_map,
         )
 
     # Store state modules on model so they're included in parameters()
@@ -140,6 +142,7 @@ def _patch_attention_layer(
     num_kv_heads: int,
     q_per_kv: int,
     chunk_size: int,
+    skip_feature_map: bool = False,
 ):
     """Replace a single LlamaAttention layer's forward with hybrid KV/state attention."""
 
@@ -236,13 +239,13 @@ def _patch_attention_layer(
 
         # --- Handle streaming heads (recurrent state) ---
         if streaming_kv_indices:
+            _map = (lambda x: x) if skip_feature_map else _feature_map
+
             for kv_idx in streaming_kv_indices:
                 state_mod = state_modules[kv_idx]
                 # Apply feature map to K for non-negative linear attention
-                # RoPE gives signed values; softmax handles this via exp(), but
-                # linear attention needs non-negative Q·K products for stable
-                # state accumulation and normalization.
-                head_k = _feature_map(k[:, kv_idx])  # [B, T, D]
+                # (skipped during calibration where raw Q/K are used with decay only)
+                head_k = _map(k[:, kv_idx])  # [B, T, D]
                 head_v = v[:, kv_idx]  # [B, T, D]
 
                 # Get corresponding query heads for this KV head
@@ -259,7 +262,7 @@ def _patch_attention_layer(
 
                     # Compute output for each query head in the group
                     for qi in range(q_per_kv):
-                        head_q = _feature_map(q[:, q_start + qi, 0:1]).squeeze(1)  # [B, D]
+                        head_q = _map(q[:, q_start + qi, 0:1]).squeeze(1)  # [B, D]
                         out, new_state, new_z = state_mod.recurrent_forward(
                             head_q, head_k_sq, head_v_sq, state, z
                         )
@@ -271,7 +274,7 @@ def _patch_attention_layer(
                 else:
                     # Prefill: compute state once, then apply each Q head
                     # Use parallel_forward with first Q head to get state trajectory
-                    first_q = _feature_map(q[:, q_start])  # [B, T, D]
+                    first_q = _map(q[:, q_start])  # [B, T, D]
                     first_out, final_state, final_z = state_mod.parallel_forward(
                         first_q, head_k, head_v, chunk_size=chunk_size,
                     )
@@ -279,7 +282,7 @@ def _patch_attention_layer(
 
                     # For remaining Q heads in group, reuse the same K,V state
                     for qi in range(1, q_per_kv):
-                        head_q = _feature_map(q[:, q_start + qi])  # [B, T, D]
+                        head_q = _map(q[:, q_start + qi])  # [B, T, D]
                         qi_out, _, _ = state_mod.parallel_forward(
                             head_q, head_k, head_v, chunk_size=chunk_size,
                         )
