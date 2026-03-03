@@ -238,7 +238,11 @@ def _patch_attention_layer(
         if streaming_kv_indices:
             for kv_idx in streaming_kv_indices:
                 state_mod = state_modules[kv_idx]
-                head_k = k[:, kv_idx]  # [B, T, D]
+                # Apply feature map to K for non-negative linear attention
+                # RoPE gives signed values; softmax handles this via exp(), but
+                # linear attention needs non-negative Q·K products for stable
+                # state accumulation and normalization.
+                head_k = _feature_map(k[:, kv_idx])  # [B, T, D]
                 head_v = v[:, kv_idx]  # [B, T, D]
 
                 # Get corresponding query heads for this KV head
@@ -255,7 +259,7 @@ def _patch_attention_layer(
 
                     # Compute output for each query head in the group
                     for qi in range(q_per_kv):
-                        head_q = q[:, q_start + qi, 0]  # [B, D]
+                        head_q = _feature_map(q[:, q_start + qi, 0:1]).squeeze(1)  # [B, D]
                         out, new_state, new_z = state_mod.recurrent_forward(
                             head_q, head_k_sq, head_v_sq, state, z
                         )
@@ -267,7 +271,7 @@ def _patch_attention_layer(
                 else:
                     # Prefill: compute state once, then apply each Q head
                     # Use parallel_forward with first Q head to get state trajectory
-                    first_q = q[:, q_start]  # [B, T, D]
+                    first_q = _feature_map(q[:, q_start])  # [B, T, D]
                     first_out, final_state, final_z = state_mod.parallel_forward(
                         first_q, head_k, head_v, chunk_size=chunk_size,
                     )
@@ -275,7 +279,7 @@ def _patch_attention_layer(
 
                     # For remaining Q heads in group, reuse the same K,V state
                     for qi in range(1, q_per_kv):
-                        head_q = q[:, q_start + qi]  # [B, T, D]
+                        head_q = _feature_map(q[:, q_start + qi])  # [B, T, D]
                         qi_out, _, _ = state_mod.parallel_forward(
                             head_q, head_k, head_v, chunk_size=chunk_size,
                         )
@@ -319,3 +323,12 @@ def _rotate_half(x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
+
+
+def _feature_map(x: torch.Tensor) -> torch.Tensor:
+    """ELU+1 feature map for non-negative linear attention (Katharopoulos et al., 2020).
+
+    Maps arbitrary signed inputs to strictly positive values, ensuring
+    Q·K products are non-negative for stable state accumulation.
+    """
+    return F.elu(x) + 1.0

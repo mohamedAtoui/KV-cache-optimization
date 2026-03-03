@@ -172,8 +172,9 @@ class DecayedLinearState(nn.Module):
             intra_z = attn_intra.sum(dim=-1, keepdim=True).clamp(min=1.0)  # [B, C, 1]
 
             # Cross-chunk: contribution from previous state
-            # For position i in chunk: state contributes λ^i * S · q_i
-            decay_for_state = lam ** positions  # [C]
+            # For position i in chunk: state contributes λ^(i+1) * S · q_i
+            # (i+1 because position 0 is one step after the previous chunk's last position)
+            decay_for_state = lam ** (positions + 1)  # [C]
             cross_out = torch.einsum("bij,bci->bcj", state, qc) * decay_for_state.unsqueeze(0).unsqueeze(-1)
             cross_z = torch.einsum("bi,bci->bc", z, qc) * decay_for_state.unsqueeze(0)
 
