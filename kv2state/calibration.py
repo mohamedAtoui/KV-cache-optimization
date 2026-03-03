@@ -139,8 +139,17 @@ def calibrate_stage1(
     num_q_heads = model_config.num_attention_heads
     q_per_kv = num_q_heads // num_kv_heads
 
-    # Resolve rotary_emb location (model-level in transformers 4.46+, else per-layer)
-    rotary_emb = getattr(model.model, "rotary_emb", None)
+    # Resolve rotary_emb (location varies across transformers versions:
+    # model.model in 4.46+, per-layer attn in older, or elsewhere in latest)
+    rotary_emb = None
+    for name, mod in model.named_modules():
+        if name.endswith("rotary_emb"):
+            rotary_emb = mod
+            break
+    if rotary_emb is None:
+        raise RuntimeError(
+            "Cannot find rotary_emb in model. Check transformers version."
+        )
 
     # Group streaming heads by layer
     streaming_by_layer = {}
@@ -193,10 +202,9 @@ def calibrate_stage1(
                 k = attn.k_proj(hidden).view(bsz, T, num_kv_heads, head_dim).transpose(1, 2)
                 v = attn.v_proj(hidden).view(bsz, T, num_kv_heads, head_dim).transpose(1, 2)
 
-                # Apply RoPE (model-level in transformers 4.46+, else per-layer)
+                # Apply RoPE
                 position_ids = torch.arange(T, device=device).unsqueeze(0).expand(bsz, -1)
-                rope = rotary_emb or attn.rotary_emb
-                cos, sin = rope(v, position_ids)
+                cos, sin = rotary_emb(v, position_ids)
                 q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
             for head_idx in head_indices:
