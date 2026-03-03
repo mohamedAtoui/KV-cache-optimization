@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def _get_streaming_data_iterator(
     tokenizer,
-    dataset_name: str = "cerebras/SlimPajama-627B",
+    dataset_name: str = "DKYoon/SlimPajama-6B",
     dataset_subset: str = "train",
     seq_len: int = 512,
     batch_size: int = 4,
@@ -37,7 +37,7 @@ def _get_streaming_data_iterator(
     """
     from datasets import load_dataset
 
-    ds = load_dataset(dataset_name, split=dataset_subset, streaming=True, trust_remote_code=True)
+    ds = load_dataset(dataset_name, split=dataset_subset, streaming=True)
 
     buffer = []
     for example in ds:
@@ -59,7 +59,7 @@ def calibrate_stage1(
     tokenizer,
     head_classification,
     state_cache,
-    dataset_name: str = "cerebras/SlimPajama-627B",
+    dataset_name: str = "DKYoon/SlimPajama-6B",
     dataset_subset: str = "train",
     lr: float = 0.01,
     num_steps: int = 2000,
@@ -139,6 +139,9 @@ def calibrate_stage1(
     num_q_heads = model_config.num_attention_heads
     q_per_kv = num_q_heads // num_kv_heads
 
+    # Resolve rotary_emb location (model-level in transformers 4.46+, else per-layer)
+    rotary_emb = getattr(model.model, "rotary_emb", None)
+
     # Group streaming heads by layer
     streaming_by_layer = {}
     for layer_idx, head_idx in streaming_heads:
@@ -190,9 +193,10 @@ def calibrate_stage1(
                 k = attn.k_proj(hidden).view(bsz, T, num_kv_heads, head_dim).transpose(1, 2)
                 v = attn.v_proj(hidden).view(bsz, T, num_kv_heads, head_dim).transpose(1, 2)
 
-                # Apply RoPE
+                # Apply RoPE (model-level in transformers 4.46+, else per-layer)
                 position_ids = torch.arange(T, device=device).unsqueeze(0).expand(bsz, -1)
-                cos, sin = attn.rotary_emb(v, position_ids)
+                rope = rotary_emb or attn.rotary_emb
+                cos, sin = rope(v, position_ids)
                 q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
             for head_idx in head_indices:
@@ -287,7 +291,7 @@ def calibrate_stage2(
     lora_rank: int = 16,
     lora_alpha: int = 32,
     lora_target_modules: Optional[list[str]] = None,
-    dataset_name: str = "cerebras/SlimPajama-627B",
+    dataset_name: str = "DKYoon/SlimPajama-6B",
     dataset_subset: str = "train",
     lr: float = 2e-4,
     num_steps: int = 5000,

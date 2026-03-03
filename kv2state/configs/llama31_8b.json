@@ -25,7 +25,7 @@
             "batch_size": 4,
             "seq_len": 512,
             "warmup_steps": 100,
-            "dataset": "cerebras/SlimPajama-627B",
+            "dataset": "DKYoon/SlimPajama-6B",
             "dataset_subset": "train",
             "log_interval": 100
         },
@@ -39,7 +39,7 @@
             "lora_rank": 16,
             "lora_alpha": 32,
             "lora_target_modules": ["q_proj", "v_proj"],
-            "dataset": "cerebras/SlimPajama-627B",
+            "dataset": "DKYoon/SlimPajama-6B",
             "dataset_subset": "train",
             "log_interval": 100
         }
