@@ -250,4 +250,23 @@ Trained all 4 attention mechanisms (MHA, MQA, GQA-4, MLA) on both TinyStories an
 - **MLA ~9% slower at inference**: the extra up-projection cost dominates when not memory-bound
 
 
+# Week 15:
+
+### 📅 Day 17: March 3rd – KV2State Sprint 1: Zero-Shot Conversion (Failed)
+
+Built the `kv2state/` package (head_classifier, state_attention, hybrid_attention, eval_perplexity) and tested zero-shot conversion of streaming heads' KV cache to decayed linear state (`S_t = λ·S_{t-1} + v_t·k_tᵀ`, elu+1 feature map, λ=0.99) on Llama-3.1-8B-Instruct (A100).
+
+#### Results
+
+Baseline WikiText-2 perplexity: **6.43**. All configs failed catastrophically:
+
+| Configuration | Streaming heads | Perplexity |
+|---------------|----------------|------------|
+| Entropy classification (64% streaming) | 164/256 | ~73,000 |
+| DuoAttention patterns (50% streaming) | 128/256 | ~4,000 |
+| DuoAttention patterns (10% streaming) | 27/256 | ~1,200 |
+
+Even converting only 10% of heads → 187× degradation. Root cause: softmax-trained Q/K/V weights are fundamentally incompatible with linear attention. Consistent with RADLADS, HALO, and LoLCATs all requiring calibration.
+
+**Conclusion**: Zero-shot is a dead end. Sprint 2 (per-head calibration + LoRA fine-tuning) is mandatory.
 
