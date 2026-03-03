@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from kv2state.hybrid_attention import _apply_rotary_pos_emb
+from kv2state.hybrid_attention import _apply_rotary_pos_emb, _feature_map
 
 logger = logging.getLogger(__name__)
 
@@ -228,12 +228,13 @@ def calibrate_stage1(
                     teacher_out = torch.matmul(attn_weights, teacher_v)  # [B, q_per_kv, T, D]
 
                 # Student: state attention (decay is differentiable)
-                head_k = k[:, head_idx]  # [B, T, D]
+                # Apply elu+1 feature map for non-negative linear attention
+                head_k = _feature_map(k[:, head_idx])  # [B, T, D]
                 head_v = v[:, head_idx]  # [B, T, D]
 
                 student_outs = []
                 for qi in range(q_per_kv):
-                    head_q = q[:, q_start + qi]  # [B, T, D]
+                    head_q = _feature_map(q[:, q_start + qi])  # [B, T, D]
                     out, _, _ = state_mod.parallel_forward(head_q, head_k, head_v)
                     student_outs.append(out)
 
