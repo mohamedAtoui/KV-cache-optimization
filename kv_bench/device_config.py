@@ -41,7 +41,7 @@ def auto_detect() -> DeviceConfig:
         )
 
     gpu_name = torch.cuda.get_device_name(0)
-    gpu_mem_bytes = torch.cuda.get_device_properties(0).total_mem
+    gpu_mem_bytes = torch.cuda.get_device_properties(0).total_memory
     gpu_mem_gb = gpu_mem_bytes / (1024 ** 3)
 
     logger.info(f"Detected GPU: {gpu_name} ({gpu_mem_gb:.1f} GB)")
