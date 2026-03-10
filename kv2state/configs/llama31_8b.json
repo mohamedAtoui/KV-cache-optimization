@@ -17,6 +17,33 @@
         "max_length": 2048,
         "stride": 512
     },
+    "calibration": {
+        "stage1": {
+            "description": "Per-head MSE alignment — learn decay per streaming head",
+            "lr": 0.02,
+            "steps": 500,
+            "batch_size": 2,
+            "seq_len": 128,
+            "warmup_steps": 50,
+            "dataset": "DKYoon/SlimPajama-6B",
+            "dataset_subset": "train",
+            "log_interval": 50
+        },
+        "stage2": {
+            "description": "End-to-end LoRA fine-tuning with cross-entropy loss",
+            "lr": 2e-4,
+            "steps": 2000,
+            "batch_size": 2,
+            "seq_len": 256,
+            "warmup_steps": 100,
+            "lora_rank": 16,
+            "lora_alpha": 32,
+            "lora_target_modules": ["q_proj", "v_proj"],
+            "dataset": "DKYoon/SlimPajama-6B",
+            "dataset_subset": "train",
+            "log_interval": 100
+        }
+    },
     "notes": {
         "gqa_ratio": "4 query heads per KV head (32 Q / 8 KV)",
         "expected_baseline_ppl": "6-7 on WikiText-2",

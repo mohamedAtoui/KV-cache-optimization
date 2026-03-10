@@ -82,6 +82,11 @@ def evaluate_perplexity(
         target_ids[:, :-trg_len] = -100
 
         outputs = model(input_chunk, labels=target_ids, use_cache=False)
+
+        # Reset recurrent state between sliding windows to prevent state leakage
+        if hasattr(model, '_kv2state_cache'):
+            model._kv2state_cache.reset()
+
         neg_log_likelihood = outputs.loss * trg_len  # Un-average the loss
 
         nlls.append(neg_log_likelihood.item())
