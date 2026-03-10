@@ -9,3 +9,4 @@ from kv2state.eval_perplexity import evaluate_perplexity
 from kv2state.calibration import calibrate_stage1, calibrate_stage2
 from kv2state.importance import ImportanceScorer, ImportanceConfig
 from kv2state.adaptive_cache import TieredKVCache, AdaptiveCacheConfig
+from kv2state.stratigraphic import StratigraphicConfig, HeadZoneAssigner, AnchorDetector

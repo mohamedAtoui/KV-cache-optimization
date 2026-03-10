@@ -23,6 +23,7 @@ from kv_bench.strategies import (
     UniformQuantStrategy,
     AdaptiveTieredStrategy,
     HybridStrategy,
+    StratigraphicStrategy,
 )
 
 
@@ -38,6 +39,7 @@ STRATEGY_REGISTRY = {
     "int8": lambda args: UniformQuantStrategy(bits=8),
     "int4": lambda args: UniformQuantStrategy(bits=4),
     "adaptive": lambda args: AdaptiveTieredStrategy(),
+    "stratigraphic": lambda args: StratigraphicStrategy(),
     "hybrid": lambda args: HybridStrategy(
         pattern_dir=args.pattern_dir,
         threshold=args.threshold,
