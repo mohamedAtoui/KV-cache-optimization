@@ -146,6 +146,7 @@ def _patch_attention_layer(
 ):
     """Replace a single LlamaAttention layer's forward with hybrid KV/state attention."""
 
+    attn._original_forward = attn.forward
     original_forward = attn.forward
 
     def hybrid_forward(
@@ -296,6 +297,8 @@ def _patch_attention_layer(
 
         # Return format expected by LlamaDecoderLayer
         # Newer transformers (4.46+): (output, attn_weights) — 2 values
+        if output_attentions and retrieval_kv_indices:
+            return output, attn_weights
         return output, None
 
     # Replace forward method
