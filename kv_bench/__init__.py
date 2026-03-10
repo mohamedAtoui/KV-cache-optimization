@@ -17,6 +17,7 @@ from kv_bench.strategies import (
     UniformQuantStrategy,
     AdaptiveTieredStrategy,
     HybridStrategy,
+    StratigraphicStrategy,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "UniformQuantStrategy",
     "AdaptiveTieredStrategy",
     "HybridStrategy",
+    "StratigraphicStrategy",
 ]

@@ -7,6 +7,7 @@ from kv_bench.strategies.snapkv import SnapKVStrategy
 from kv_bench.strategies.uniform_quant import UniformQuantStrategy
 from kv_bench.strategies.adaptive_tiered import AdaptiveTieredStrategy
 from kv_bench.strategies.hybrid import HybridStrategy
+from kv_bench.strategies.stratigraphic import StratigraphicStrategy
 
 __all__ = [
     "FullKVBaseline",
@@ -16,4 +17,5 @@ __all__ = [
     "UniformQuantStrategy",
     "AdaptiveTieredStrategy",
     "HybridStrategy",
+    "StratigraphicStrategy",
 ]
