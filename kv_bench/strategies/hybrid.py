@@ -1,13 +1,14 @@
-"""Hybrid strategy: KV2State for streaming heads + AdaptiveTiered for retrieval heads.
+"""Hybrid strategy: StreamingAttention for streaming heads + AdaptiveTiered for retrieval heads.
 
 Combines the best of both: streaming heads are converted to fixed-size recurrent
-state (KV2State), while retrieval heads get multi-signal importance-based tiered
+state (StreamingAttention), while retrieval heads get multi-signal importance-based tiered
 compression (AdaptiveTiered). This is the full vision from the project.
 """
 
 import logging
 from typing import Optional
 
+import torch
 import torch.nn as nn
 
 from kv_bench.strategy import KVCacheStrategy
@@ -16,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class HybridStrategy(KVCacheStrategy):
-    """KV2State (streaming) + AdaptiveTiered (retrieval) combined strategy."""
+    """StreamingAttention (streaming) + AdaptiveTiered (retrieval) combined strategy."""
 
-    name = "Hybrid (KV2State + Tiered)"
+    name = "Hybrid (StreamingAttention + Tiered)"
 
     def __init__(
         self,
@@ -39,10 +40,11 @@ class HybridStrategy(KVCacheStrategy):
         self.checkpoint_path = checkpoint_path
         self._state_cache = None
         self._head_classification = None
+        self._cumulative_attn: dict[int, torch.Tensor] = {}
 
     def setup(self, model: nn.Module, model_config, device_config) -> nn.Module:
-        from kv2state.head_classifier import load_duo_attention_patterns
-        from kv2state.hybrid_attention import patch_model_for_kv2state, KV2StateConfig
+        from streaming_attention.head_classifier import load_duo_attention_patterns
+        from streaming_attention.hybrid_attention import patch_model_for_streaming_attention, StreamingAttentionConfig
 
         if self.pattern_dir is None:
             raise ValueError("HybridStrategy requires pattern_dir")
@@ -51,31 +53,52 @@ class HybridStrategy(KVCacheStrategy):
             self.pattern_dir, threshold=self.threshold
         )
 
-        config = KV2StateConfig(decay_init=self.decay_init)
-        model, self._state_cache = patch_model_for_kv2state(
+        config = StreamingAttentionConfig(decay_init=self.decay_init)
+        model, self._state_cache = patch_model_for_streaming_attention(
             model, self._head_classification, config
         )
 
         if self.checkpoint_path:
-            import torch
             state_dict = torch.load(self.checkpoint_path, map_location="cpu")
-            if hasattr(model, '_kv2state_modules'):
-                model._kv2state_modules.load_state_dict(state_dict, strict=False)
+            if hasattr(model, '_streaming_attention_modules'):
+                model._streaming_attention_modules.load_state_dict(state_dict, strict=False)
 
         return model
 
     def reset(self):
         if self._state_cache is not None:
             self._state_cache.reset()
+        self._cumulative_attn.clear()
 
     def needs_attention_weights(self) -> bool:
         return True
 
     def on_step(self, layer_idx: int, attn_weights=None, **kwargs):
-        # In hybrid mode, attention weights from retrieval heads could feed
-        # the adaptive tiered scoring. For now, we collect them but the actual
-        # tiered compression is analytical.
-        pass
+        """Accumulate attention weights for retrieval head eviction scoring."""
+        if attn_weights is None:
+            return
+        score = attn_weights.float().sum(dim=(0, 1, 2))  # [KV]
+        if layer_idx in self._cumulative_attn:
+            old = self._cumulative_attn[layer_idx]
+            if old.shape[0] < score.shape[0]:
+                new = torch.zeros_like(score)
+                new[:old.shape[0]] = old
+                old = new
+            self._cumulative_attn[layer_idx] = old[:score.shape[0]] + score
+        else:
+            self._cumulative_attn[layer_idx] = score
+
+    def get_keep_mask(self, seq_len, device):
+        """Evict lowest-attention tokens from retrieval heads (matching AdaptiveTiered logic)."""
+        if not self._cumulative_attn:
+            return None
+        total_keep = self.budget_fp16 + self.budget_int8 + self.budget_int4
+        keep_count = int(seq_len * total_keep)
+        scores = torch.stack(list(self._cumulative_attn.values())).mean(dim=0)[:seq_len]
+        keep = torch.zeros(seq_len, dtype=torch.bool, device=device)
+        topk = scores.topk(min(keep_count, seq_len)).indices
+        keep[topk] = True
+        return keep
 
     def memory_bytes(self, seq_len: int, model_config) -> int:
         num_layers = model_config.num_hidden_layers
@@ -115,13 +138,14 @@ class HybridStrategy(KVCacheStrategy):
             if hasattr(attn, '_original_forward'):
                 attn.forward = attn._original_forward
                 del attn._original_forward
-                if hasattr(attn, '_kv2state_patched'):
-                    del attn._kv2state_patched
+                if hasattr(attn, '_streaming_attention_patched'):
+                    del attn._streaming_attention_patched
 
-        if hasattr(model, '_kv2state_modules'):
-            del model._kv2state_modules
-        if hasattr(model, '_kv2state_cache'):
-            del model._kv2state_cache
+        if hasattr(model, '_streaming_attention_modules'):
+            del model._streaming_attention_modules
+        if hasattr(model, '_streaming_attention_cache'):
+            del model._streaming_attention_cache
 
         self._state_cache = None
+        self._cumulative_attn.clear()
         return model

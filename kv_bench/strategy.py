@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
 import torch.nn as nn
 
 
@@ -81,3 +82,19 @@ class KVCacheStrategy(ABC):
         Only called if needs_attention_weights() returns True.
         """
         pass
+
+    def get_keep_mask(self, seq_len: int, device) -> Optional[torch.Tensor]:
+        """Return [seq_len] bool tensor: True = keep, False = evict.
+
+        Returns None if strategy doesn't evict (single-pass eval).
+        """
+        return None
+
+    def get_zone_masks(self, seq_len: int, device) -> Optional[dict[int, torch.Tensor]]:
+        """Return per-layer zone assignments for quantization simulation.
+
+        Returns:
+            Dict mapping layer_idx -> [num_kv_heads, seq_len] int tensor of zone IDs
+            (0=FP16, 1=INT8, 2=INT4, 3=EVICT), or None if not applicable.
+        """
+        return None

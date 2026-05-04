@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from kv_bench.strategy import KVCacheStrategy, StrategyResult
 from kv_bench.device_config import DeviceConfig, auto_detect
+from kv_bench.quant_sim import install_quant_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,21 @@ class BenchmarkRunner:
 
     def _load_model(self):
         """Load model and tokenizer."""
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
         logger.info(f"Loading model: {self.model_name}")
         dc = self.device_config
 
+        # Check if any strategy needs attention weights → force eager attention
+        needs_eager = any(s.needs_attention_weights() for s in self.strategies)
+
         kwargs = {"torch_dtype": dc.dtype}
+        if needs_eager:
+            # Force eager via config to ensure output_attentions actually works
+            config = AutoConfig.from_pretrained(self.model_name)
+            config._attn_implementation = "eager"
+            kwargs["config"] = config
+            logger.info("Forcing eager attention (strategies need attention weights)")
         if dc.device == "cuda":
             kwargs["device_map"] = "auto"
         if dc.load_in_8bit:
@@ -68,6 +78,14 @@ class BenchmarkRunner:
             self.model = self.model.to(dc.device)
 
         self.model.eval()
+
+        if needs_eager:
+            layer0 = self.model.model.layers[0].self_attn
+            impl = getattr(layer0, '_attn_implementation',
+                           getattr(getattr(layer0, 'config', None),
+                                   '_attn_implementation', 'unknown'))
+            logger.info(f"Attention implementation: {impl}")
+
         logger.info("Model loaded successfully")
 
     def _load_dataset(self):
@@ -117,28 +135,81 @@ class BenchmarkRunner:
 
             t0 = time.perf_counter()
 
-            forward_kwargs = {
-                "labels": target_ids,
-                "use_cache": False,
-            }
             if needs_weights:
-                forward_kwargs["output_attentions"] = True
+                # Pass 1: full attention with output_attentions for scoring
+                outputs_full = self.model(
+                    input_chunk, labels=target_ids,
+                    use_cache=False, output_attentions=True,
+                )
 
-            outputs = self.model(input_chunk, **forward_kwargs)
+                # Feed attention weights to strategy
+                if outputs_full.attentions is not None:
+                    for layer_idx, attn_w in enumerate(outputs_full.attentions):
+                        strategy.on_step(layer_idx=layer_idx, attn_weights=attn_w)
+
+                # Check if strategy wants to evict / compress
+                keep_mask = strategy.get_keep_mask(input_chunk.size(1), input_chunk.device)
+                zone_masks = strategy.get_zone_masks(input_chunk.size(1), input_chunk.device)
+
+                if keep_mask is not None:
+                    # Free pass-1 outputs before pass 2 to avoid OOM
+                    del outputs_full
+                    torch.cuda.empty_cache()
+
+                    evicted = (~keep_mask).sum().item()
+                    logger.debug(f"Evicting {evicted}/{input_chunk.size(1)} tokens")
+                    # Build 4D mask: causal + eviction
+                    T = input_chunk.size(1)
+                    causal = torch.triu(
+                        torch.ones(T, T, device=input_chunk.device, dtype=torch.bool),
+                        diagonal=1,
+                    )
+                    mask = torch.zeros(T, T, device=input_chunk.device, dtype=dc.dtype)
+                    mask.masked_fill_(causal, float('-inf'))
+                    # Block evicted key positions (columns)
+                    mask[:, ~keep_mask] = float('-inf')
+                    B = input_chunk.size(0)
+                    attention_mask_4d = mask.unsqueeze(0).unsqueeze(0).expand(B, 1, T, T)
+
+                    # Install quantization hooks if zone masks provided
+                    quant_hooks = []
+                    patched_attns = []
+                    if zone_masks is not None:
+                        quant_hooks, patched_attns = install_quant_hooks(
+                            self.model, zone_masks, self.model.config
+                        )
+                        logger.debug(
+                            f"Installed {len(quant_hooks)} quant hooks, "
+                            f"patched {len(patched_attns)} attn forwards"
+                        )
+
+                    try:
+                        # Pass 2: loss with eviction + quantization applied
+                        outputs = self.model(
+                            input_chunk, labels=target_ids,
+                            use_cache=False, attention_mask=attention_mask_4d,
+                        )
+                    finally:
+                        for h in quant_hooks:
+                            h.remove()
+                        for attn in patched_attns:
+                            attn.forward = attn._original_forward_for_quant
+                            del attn._original_forward_for_quant
+                else:
+                    outputs = outputs_full
+            else:
+                outputs = self.model(
+                    input_chunk, labels=target_ids, use_cache=False,
+                )
 
             prefill_times.append((time.perf_counter() - t0) * 1000)
-
-            # Feed attention weights to strategy if needed
-            if needs_weights and outputs.attentions is not None:
-                for layer_idx, attn_w in enumerate(outputs.attentions):
-                    strategy.on_step(layer_idx=layer_idx, attn_weights=attn_w)
 
             # Reset strategy state between windows
             strategy.reset()
 
-            # Also reset kv2state cache if present
-            if hasattr(self.model, '_kv2state_cache'):
-                self.model._kv2state_cache.reset()
+            # Also reset streaming attention cache if present
+            if hasattr(self.model, '_streaming_attn_cache'):
+                self.model._streaming_attn_cache.reset()
 
             neg_log_likelihood = outputs.loss * trg_len
             nlls.append(neg_log_likelihood.item())

@@ -7,13 +7,13 @@ This prevents re-compression error compounding ("diagenetic overprinting").
 Key innovations:
 - Per-head zone assignment (each KV head gets its own compression profile)
 - Monotonic downgrade-only constraint
-- Stylolite anchors: high-attention + topic-shift tokens pinned at FP16
+- Stylolite anchors: high-attention tokens pinned at FP16
 - Inverse layer budget: early layers compress more, late layers preserve more
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 from torch import Tensor
@@ -24,6 +24,8 @@ ZONE_FP16 = 0
 ZONE_INT8 = 1
 ZONE_INT4 = 2
 ZONE_EVICT = 3
+ZONE_TQ4 = 4    # TurboQuant 4-bit (stage1=3 + QJL=1)
+ZONE_TQ3 = 5    # TurboQuant 3-bit (stage1=2 + QJL=1)
 
 
 @dataclass
@@ -31,34 +33,37 @@ class StratigraphicConfig:
     """Configuration for stratigraphic KV-cache compression."""
 
     # Layer budget: fp16_frac(l) = zone_surface * [(1 - lambda_) + lambda_ * l / L]
-    zone_surface: float = 0.30  # max FP16 fraction (at deepest layer)
+    zone_surface: float = 0.20  # max FP16 fraction (at deepest layer)
     lambda_: float = 0.6  # layer-scaling factor (0 = uniform, 1 = full gradient)
 
-    # Zone fractions (of remaining tokens after FP16 allocation)
-    zone_shallow: float = 0.30  # INT8 fraction
-    zone_deep: float = 0.25  # INT4 fraction
-    # Remainder is evicted
+    # Zone fractions (must sum to 1.0 — no eviction, compression via quant only)
+    # Memory: 0.20×1.0 + 0.40×0.5 + 0.40×0.25 = 0.50 → 2.0x compression
+    zone_shallow: float = 0.40  # INT8 fraction
+    zone_deep: float = 0.40  # INT4 fraction
 
     # Anchor detection
     anchor_budget: float = 0.05  # max fraction of tokens as anchors
     anchor_attn_percentile: float = 0.99  # attention threshold for anchors
 
-    # Topic-shift detection
-    topic_shift_window: int = 32  # sliding window for cosine distance
-    topic_shift_threshold: float = 0.3  # cosine distance threshold for topic shift
+    # Sink + recent protection (matches H2O/SnapKV)
+    sink_size: int = 4  # initial tokens always kept (attention sinks)
+    recent_size: int = 64  # recent tokens always kept (local context)
 
     # Compression params
     sketch_rank: int = 8  # rank of SVD sketch for evicted tokens
     int8_group_size: int = 128
     int4_group_size: int = 64
 
+    # Diagnostic flags (for ablation experiments)
+    eviction_only: bool = False  # If True, skip quant hooks (eviction-only mode)
+    quant_only: bool = False  # If True, keep all tokens (quant-only mode)
+
 
 class AnchorDetector:
     """Detect anchor tokens that should be pinned at FP16.
 
-    Two signals:
-    1. Tokens above 99th-percentile cumulative attention (across heads)
-    2. Topic-shift boundaries (high cosine distance in key states)
+    Tokens above 99th-percentile cumulative attention (across heads)
+    are marked as anchors, capped at anchor_budget fraction.
     """
 
     def __init__(self, config: StratigraphicConfig):
@@ -67,13 +72,11 @@ class AnchorDetector:
     def detect_anchors(
         self,
         cumulative_attn: Tensor,
-        key_states: Tensor | None = None,
     ) -> Tensor:
         """Detect anchor positions.
 
         Args:
             cumulative_attn: [H, seq_len] cumulative attention per head.
-            key_states: Optional [B, H, T, D] key states for topic detection.
 
         Returns:
             [seq_len] bool mask of anchor positions.
@@ -81,22 +84,13 @@ class AnchorDetector:
         seq_len = cumulative_attn.shape[-1]
         device = cumulative_attn.device
 
-        # Signal 1: high-attention tokens (mean across heads)
+        # High-attention tokens (mean across heads)
         mean_attn = cumulative_attn.float().mean(dim=0)  # [seq_len]
         if seq_len > 0:
             threshold = torch.quantile(mean_attn, self.config.anchor_attn_percentile)
-            attn_anchors = mean_attn >= threshold
+            anchors = mean_attn >= threshold
         else:
-            attn_anchors = torch.zeros(seq_len, dtype=torch.bool, device=device)
-
-        # Signal 2: topic-shift boundaries via sliding-window cosine distance
-        if key_states is not None and seq_len > self.config.topic_shift_window:
-            shift_anchors = self._detect_topic_shifts(key_states)
-        else:
-            shift_anchors = torch.zeros(seq_len, dtype=torch.bool, device=device)
-
-        # Combine with OR
-        anchors = attn_anchors | shift_anchors
+            anchors = torch.zeros(seq_len, dtype=torch.bool, device=device)
 
         # Cap at anchor budget
         max_anchors = max(1, int(self.config.anchor_budget * seq_len))
@@ -109,40 +103,6 @@ class AnchorDetector:
             anchors[top_idx] = True
 
         return anchors
-
-    def _detect_topic_shifts(self, key_states: Tensor) -> Tensor:
-        """Detect topic boundaries via sliding-window cosine distance.
-
-        Args:
-            key_states: [B, H, T, D] key states.
-
-        Returns:
-            [T] bool mask of topic-shift positions.
-        """
-        # Average over batch and heads → [T, D]
-        keys = key_states.float().mean(dim=(0, 1))
-        T = keys.shape[0]
-        w = self.config.topic_shift_window
-
-        # Compute mean key in sliding windows
-        # Left window: [t-w, t), right window: [t, t+w)
-        shifts = torch.zeros(T, dtype=torch.bool, device=keys.device)
-        if T < 2 * w:
-            return shifts
-
-        # Efficient: compute cumulative sum for windowed means
-        cumsum = torch.cumsum(keys, dim=0)  # [T, D]
-
-        for t in range(w, T - w):
-            left_mean = (cumsum[t] - cumsum[t - w]) / w  # [D]
-            right_mean = (cumsum[t + w] - cumsum[t]) / w  # [D]
-            cos_sim = torch.nn.functional.cosine_similarity(
-                left_mean.unsqueeze(0), right_mean.unsqueeze(0)
-            )
-            if (1.0 - cos_sim.item()) > self.config.topic_shift_threshold:
-                shifts[t] = True
-
-        return shifts
 
 
 class HeadZoneAssigner:
@@ -210,7 +170,10 @@ class HeadZoneAssigner:
             # Override: anchors pinned to FP16
             zones[h, anchors] = ZONE_FP16
 
-            # Monotonic enforcement: can only deepen (increase zone number)
+            # Monotonic enforcement: tokens can only move to deeper compression.
+            # In the kv_bench sliding-window eval, this is inert because
+            # zone_history is cleared between windows and assign_zones is
+            # called once per window. Active in real-time generation scenarios.
             key = (layer_idx, h)
             if key in self._zone_history:
                 old = self._zone_history[key]

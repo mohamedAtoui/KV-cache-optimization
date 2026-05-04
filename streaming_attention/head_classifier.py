@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)

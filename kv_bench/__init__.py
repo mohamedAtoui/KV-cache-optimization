@@ -11,7 +11,7 @@ from kv_bench.report import print_table, save_json, save_markdown
 
 from kv_bench.strategies import (
     FullKVBaseline,
-    KV2StateStrategy,
+    StreamingAttentionStrategy,
     H2OStrategy,
     SnapKVStrategy,
     UniformQuantStrategy,
@@ -30,7 +30,7 @@ __all__ = [
     "save_json",
     "save_markdown",
     "FullKVBaseline",
-    "KV2StateStrategy",
+    "StreamingAttentionStrategy",
     "H2OStrategy",
     "SnapKVStrategy",
     "UniformQuantStrategy",

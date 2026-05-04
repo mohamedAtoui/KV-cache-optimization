@@ -104,7 +104,6 @@ Thumbs.db
 .env.local
 /data_processed/wikitext2_processed
 /data_processed/wikitext103_processed
-/DIARY.md
 
 # Documentation files (auto-generated/temporary)
 TRAINING_RESULTS.md
@@ -117,3 +116,5 @@ best_model_mla_ss_50pct.pt
 best_model_mqa_ss_50pct.pt
 best_model_mha_ss_50pct.pt  
 
+report/
+report.zip

@@ -56,8 +56,8 @@ def auto_detect() -> DeviceConfig:
             max_seq_len=8192,
             stride=2048,
         )
-    elif gpu_mem_gb >= 35:
-        # A100-40GB
+    elif gpu_mem_gb >= 30:
+        # A100-32GB / A100-40GB
         config = DeviceConfig(
             device="cuda",
             gpu_name=gpu_name,

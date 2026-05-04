@@ -4,12 +4,13 @@ Usage:
     python -m kv_bench \
         --model meta-llama/Llama-3.1-8B-Instruct \
         --pattern-dir attn_patterns/Meta-Llama-3.1-8B-Instruct \
-        --strategies baseline kv2state h2o snapkv int8 int4 adaptive hybrid \
+        --strategies baseline streaming_attention h2o snapkv int8 int4 adaptive hybrid \
         --output results.json
 """
 
 import argparse
 import logging
+import os
 import sys
 
 from kv_bench.device_config import auto_detect
@@ -17,19 +18,22 @@ from kv_bench.runner import BenchmarkRunner
 from kv_bench.report import print_table, save_json, save_markdown
 from kv_bench.strategies import (
     FullKVBaseline,
-    KV2StateStrategy,
+    StreamingAttentionStrategy,
     H2OStrategy,
     SnapKVStrategy,
     UniformQuantStrategy,
     AdaptiveTieredStrategy,
     HybridStrategy,
     StratigraphicStrategy,
+    TurboQuantStrategy,
+    HybridTQStrategy,
 )
+from streaming_attention.stratigraphic import StratigraphicConfig
 
 
 STRATEGY_REGISTRY = {
     "baseline": lambda args: FullKVBaseline(),
-    "kv2state": lambda args: KV2StateStrategy(
+    "streaming_attention": lambda args: StreamingAttentionStrategy(
         pattern_dir=args.pattern_dir,
         threshold=args.threshold,
         decay_init=args.decay_init,
@@ -40,10 +44,30 @@ STRATEGY_REGISTRY = {
     "int4": lambda args: UniformQuantStrategy(bits=4),
     "adaptive": lambda args: AdaptiveTieredStrategy(),
     "stratigraphic": lambda args: StratigraphicStrategy(),
+    "stratigraphic-evict": lambda args: StratigraphicStrategy(
+        StratigraphicConfig(eviction_only=True)
+    ),
+    "stratigraphic-quant": lambda args: StratigraphicStrategy(
+        StratigraphicConfig(quant_only=True)
+    ),
     "hybrid": lambda args: HybridStrategy(
         pattern_dir=args.pattern_dir,
         threshold=args.threshold,
         decay_init=args.decay_init,
+    ),
+    "tq3": lambda args: TurboQuantStrategy(bits_stage1=2, qjl=True),
+    "tq4": lambda args: TurboQuantStrategy(bits_stage1=3, qjl=True),
+    "hybrid-tq3": lambda args: HybridTQStrategy(
+        pattern_dir=args.pattern_dir,
+        threshold=args.threshold,
+        decay_init=args.decay_init,
+        bits_stage1=2, qjl=True,
+    ),
+    "hybrid-tq4": lambda args: HybridTQStrategy(
+        pattern_dir=args.pattern_dir,
+        threshold=args.threshold,
+        decay_init=args.decay_init,
+        bits_stage1=3, qjl=True,
     ),
 }
 
@@ -61,7 +85,7 @@ def parse_args():
     )
     parser.add_argument(
         "--pattern-dir", default=None,
-        help="Path to DuoAttention pattern directory (required for kv2state/hybrid)",
+        help="Path to DuoAttention pattern directory (required for streaming_attention/hybrid)",
     )
     parser.add_argument(
         "--threshold", type=float, default=0.5,
@@ -69,7 +93,7 @@ def parse_args():
     )
     parser.add_argument(
         "--decay-init", type=float, default=0.99,
-        help="Initial decay value for KV2State",
+        help="Initial decay value for streaming attention",
     )
 
     # Strategies
@@ -134,9 +158,14 @@ def main():
             logging.error(f"Failed to create strategy '{name}': {e}")
             sys.exit(1)
 
-    # Validate kv2state/hybrid require pattern_dir
+    # Validate pattern_dir exists if provided
+    if args.pattern_dir and not os.path.exists(args.pattern_dir):
+        logging.error(f"--pattern-dir '{args.pattern_dir}' does not exist")
+        sys.exit(1)
+
+    # Validate streaming_attention/hybrid require pattern_dir
     for s in strategies:
-        if isinstance(s, (KV2StateStrategy, HybridStrategy)) and args.pattern_dir is None:
+        if isinstance(s, (StreamingAttentionStrategy, HybridStrategy, HybridTQStrategy)) and args.pattern_dir is None:
             logging.error(
                 f"Strategy '{s.name}' requires --pattern-dir. "
                 "Provide path to DuoAttention patterns."

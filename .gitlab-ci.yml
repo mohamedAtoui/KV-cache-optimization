@@ -1,0 +1,15 @@
+stages:
+  - test
+
+test:
+  stage: test
+  before_script:
+    - python3 -m venv .venv
+    - .venv/bin/pip install --upgrade pip
+    - .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+    - .venv/bin/pip install pytest numpy tqdm matplotlib seaborn tensorboard transformers datasets
+  script:
+    - .venv/bin/pytest tests/ -v
+  only:
+    - branches
+    - merge_requests

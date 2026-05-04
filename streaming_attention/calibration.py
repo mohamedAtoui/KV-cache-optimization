@@ -1,4 +1,4 @@
-"""Two-stage calibration for KV2State: decay alignment + LoRA fine-tuning.
+"""Two-stage calibration for streaming attention: decay alignment + LoRA fine-tuning.
 
 Stage 1: Per-head MSE alignment — learns optimal decay (log_decay) per streaming head
          by matching softmax attention outputs as teacher. All other params frozen.
@@ -11,7 +11,6 @@ Reference: LoLCATs (Hedgehog + LoRA), Mamba-2 distillation literature.
 
 import logging
 import math
-import os
 from typing import Optional
 
 import torch
@@ -19,7 +18,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from kv2state.hybrid_attention import _apply_rotary_pos_emb, _feature_map
+from streaming_attention.hybrid_attention import _apply_rotary_pos_emb, _feature_map
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,7 @@ def calibrate_stage1(
     4. Only log_decay parameters are trainable
 
     Args:
-        model: Patched KV2State model (with _kv2state_modules).
+        model: Patched model (with _streaming_attn_modules).
         tokenizer: Tokenizer for the model.
         head_classification: HeadClassification from head_classifier.
         state_cache: StateCache (will be reset each batch).
@@ -105,7 +104,7 @@ def calibrate_stage1(
         param.requires_grad = False
 
     decay_params = []
-    for name, param in model._kv2state_modules.named_parameters():
+    for name, param in model._streaming_attn_modules.named_parameters():
         if "log_decay" in name:
             param.requires_grad = True
             decay_params.append(param)
@@ -115,7 +114,7 @@ def calibrate_stage1(
     logger.info(f"Trainable decay parameters: {num_decay_params}")
 
     if num_decay_params == 0:
-        raise ValueError("No trainable decay parameters found. Set learnable_decay=True in KV2StateConfig.")
+        raise ValueError("No trainable decay parameters found. Set learnable_decay=True in StreamingAttentionConfig.")
 
     optimizer = torch.optim.Adam(decay_params, lr=lr)
 
@@ -208,7 +207,7 @@ def calibrate_stage1(
                 q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
             for head_idx in head_indices:
-                state_mod = model._kv2state_modules[f"layer{layer_idx}_head{head_idx}"]
+                state_mod = model._streaming_attn_modules[f"layer{layer_idx}_head{head_idx}"]
                 q_start = head_idx * q_per_kv
 
                 # Teacher: standard softmax attention for this KV group
@@ -279,7 +278,7 @@ def calibrate_stage1(
 
     # Collect final decay values
     final_decays = {}
-    for name, param in model._kv2state_modules.named_parameters():
+    for name, param in model._streaming_attn_modules.named_parameters():
         if "log_decay" in name:
             final_decays[name] = torch.sigmoid(param.data).item()
 
@@ -316,7 +315,7 @@ def calibrate_stage2(
     params, and trains with standard next-token prediction loss on SlimPajama.
 
     Args:
-        model: Patched KV2State model with calibrated decay (from Stage 1).
+        model: Patched model with calibrated decay (from Stage 1).
         tokenizer: Tokenizer for the model.
         state_cache: StateCache (reset each batch).
         lora_rank: LoRA rank.

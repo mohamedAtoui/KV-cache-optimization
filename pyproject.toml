@@ -1,0 +1,29 @@
+[project]
+name = "kv-cache-optimization"
+version = "0.1.0"
+description = "KV-cache optimization research: attention mechanisms, streaming state, and benchmarking"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    "streaming_attention",
+    "kv_bench",
+    "mha-transformer",
+]
+
+[tool.uv.workspace]
+members = ["AttentionHeads", "streaming_attention", "kv_bench"]
+
+[tool.uv.sources]
+streaming_attention = { workspace = true }
+kv_bench = { workspace = true }
+mha-transformer = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

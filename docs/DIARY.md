@@ -270,3 +270,65 @@ Even converting only 10% of heads → 187× degradation. Root cause: softmax-tra
 
 **Conclusion**: Zero-shot is a dead end. Sprint 2 (per-head calibration + LoRA fine-tuning) is mandatory.
 
+### 📅 Day 18: March 21st – Refactoring & Code Quality Cleanup
+
+Fixed a hybrid strategy bug where streaming-head indices were computed incorrectly, tuned stratigraphic config defaults for better layer-aware eviction, and swept unused imports and dead code across the `kv_bench/` strategies.
+General code quality pass: tightened type annotations, removed stale comments, and aligned the adaptive cache and calibration modules with the latest API changes.
+
+First benchmark attempt on Qwen2.5-0.5B was a mistake — the model only has 2 KV heads, far too few for per-head stratigraphic zone assignment to work (PPL tripled: 12.49 → 36.53). Switching to Llama-3.2-1B-Instruct (8 KV heads) for the next run.
+
+### 📅 Day 19: March 22nd – KIVI-Style Quant Fix & Eviction Removal
+
+Fixed stratigraphic PPL regression (9.39→18.66) by switching to KIVI-style per-channel key quantization and eliminating the broken 1D averaged eviction — compression is now purely zone-based quant (FP16/INT8/INT4). Also fixed UniformQuantStrategy which was silently skipping quant noise. Result: stratigraphic now achieves +0.67 ΔPPL at 2.0x compression on Llama-3.2-1B.
+
+### 📅 Day 20: March 23rd – Post-RoPE Key Quantization Fix & Benchmark Validation
+
+#### The bug
+Quantization hooks were installed on `k_proj` linear layers, so they fired **before** RoPE. Real KV caches store post-RoPE keys. Pre-RoPE values are smooth linear projections — trivially representable by INT8 (127 levels), which is why INT8 and INT4 both showed +0.00 ΔPPL (no quantization noise at all).
+
+#### The fix
+Replaced the `k_proj` forward hook with a `self_attn.forward` wrapper that:
+1. Projects Q, K, V normally
+2. Applies RoPE
+3. **Then** applies per-channel key quantization (INT8/INT4) based on zone masks
+4. Runs standard SDPA + o_proj
+
+Values (`v_proj`) are unaffected — they never get RoPE, so the hook location was already correct.
+
+#### Results on Llama-3.2-1B-Instruct (A100, WikiText-2)
+
+| Strategy | PPL | ΔPPL | Compression |
+|----------|-----|------|-------------|
+| FullKV (baseline) | 11.15 | — | 1.0x |
+| **Stratigraphic** | **11.18** | **+0.04** | **2.2x** |
+| INT8-all | 11.15 | +0.00 | 1.9x |
+| INT4-all | 13.37 | +2.22 | 3.6x |
+| SnapKV (50%) | 17.94 | +6.79 | 2.0x |
+| H2O (50%) | 107.72 | +96.57 | 2.0x |
+
+INT4 going from +0.00 to +2.22 confirms the fix is working. INT8 at +0.00 is likely genuine — 127 per-channel levels are enough for post-RoPE keys on a 1B model.
+
+**Stratigraphic achieves the best quality-compression tradeoff**: +0.04 PPL at 2.2x compression, beating all other strategies.
+
+#### Literature review
+Researched vLLM, Unsloth, KIVI, KVQuant, QServe, and ~25 other KV cache papers. Confirmed:
+- Our KIVI-style per-channel keys / per-token values approach matches state of the art
+- vLLM also quantizes post-RoPE (at cache-write time), validating our fix
+- The stratigraphic combination (per-head zones + monotonic downgrade + inverse layer budget + anchor detection + 4-tier mixed-precision) is novel — closest competitor is LeanKV (3/5 components)
+
+---
+
+### 📅 Day 21: March 25th – Project Refactoring for Presentability
+
+Refactored the entire repository to make it clean and navigable for anyone landing on it.
+
+**Rename: `kv2state/` → `streaming_attention/`**
+- The old name was unclear. Renamed the package, all imports, class names (`KV2StateStrategy` → `StreamingAttentionStrategy`, `KV2StateConfig` → `StreamingAttentionConfig`, `patch_model_for_kv2state` → `patch_model_for_streaming_attention`), private attributes, strategy files, notebooks, and documentation references.
+
+**Reorganized project structure:**
+- Moved scattered artifact directories (`DataEmbeddAnalyses/`, `attention_comparison_results/`, `training_validation_graphs/`, `all_training_artifacts/`) into `AttentionHeads/` where they belong.
+- Moved `STRATIGRAPHIC.md` and `DIARY.md` into `docs/`.
+- Removed empty `scripts/` placeholder.
+
+**Rewrote root README.md** as a proper landing page covering all three packages (AttentionHeads, streaming_attention, kv_bench) with project structure, quick start, results table, and references.
+

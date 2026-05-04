@@ -1,6 +1,6 @@
 """Adaptive Tiered KV Cache for retrieval heads.
 
-Extends the existing KV2State hybrid attention by adding multi-tier compression
+Extends the existing streaming hybrid attention by adding multi-tier compression
 to retrieval heads (which previously kept full FP16 KV cache). Works alongside
 streaming heads' recurrent state.
 
@@ -19,7 +19,6 @@ Key innovations:
 - Hockey-stick degradation monitoring (Triage #6, Geology #9)
 """
 
-import math
 import logging
 from typing import Optional
 from dataclasses import dataclass
@@ -28,7 +27,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kv2state.importance import ImportanceScorer, ImportanceConfig
+from streaming_attention.importance import ImportanceScorer, ImportanceConfig
 
 logger = logging.getLogger(__name__)
 
