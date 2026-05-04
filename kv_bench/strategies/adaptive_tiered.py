@@ -1,12 +1,13 @@
 """Adaptive tiered compression strategy using multi-signal importance scoring.
 
-Uses the ImportanceScorer and TieredKVCache from kv2state to apply
+Uses the ImportanceScorer and TieredKVCache from streaming_attention to apply
 progressive compression (FP16/INT8/INT4/evict) based on importance.
 """
 
 import logging
 from typing import Optional
 
+import torch
 import torch.nn as nn
 
 from kv_bench.strategy import KVCacheStrategy
@@ -37,9 +38,7 @@ class AdaptiveTieredStrategy(KVCacheStrategy):
         self.budget_fp16 = budget_fp16
         self.budget_int8 = budget_int8
         self.budget_int4 = budget_int4
-        evict_pct = 1.0 - budget_fp16 - budget_int8 - budget_int4
-        self.name = f"Adaptive Tiered"
-        self._scorer = None
+        self.name = "Adaptive Tiered"
         self._cumulative_attn: dict[int, object] = {}
 
     def setup(self, model: nn.Module, model_config, device_config) -> nn.Module:
@@ -61,13 +60,23 @@ class AdaptiveTieredStrategy(KVCacheStrategy):
         if layer_idx in self._cumulative_attn:
             old = self._cumulative_attn[layer_idx]
             if old.shape[0] < score.shape[0]:
-                import torch
                 new = torch.zeros_like(score)
                 new[:old.shape[0]] = old
                 old = new
             self._cumulative_attn[layer_idx] = old[:score.shape[0]] + score
         else:
             self._cumulative_attn[layer_idx] = score
+
+    def get_keep_mask(self, seq_len, device):
+        if not self._cumulative_attn:
+            return None
+        total_keep = self.budget_fp16 + self.budget_int8 + self.budget_int4
+        keep_count = int(seq_len * total_keep)
+        scores = torch.stack(list(self._cumulative_attn.values())).mean(dim=0)[:seq_len]
+        keep = torch.zeros(seq_len, dtype=torch.bool, device=device)
+        topk = scores.topk(min(keep_count, seq_len)).indices
+        keep[topk] = True
+        return keep
 
     def memory_bytes(self, seq_len: int, model_config) -> int:
         num_layers = model_config.num_hidden_layers

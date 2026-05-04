@@ -88,6 +88,28 @@ class SnapKVStrategy(KVCacheStrategy):
 
         self._obs_attn[layer_idx] = score
 
+    def get_keep_mask(self, seq_len, device):
+        if not self._obs_attn:
+            return None
+        # Pad or truncate scores to match seq_len
+        raw = torch.stack(list(self._obs_attn.values())).mean(dim=0)
+        if raw.shape[0] < seq_len:
+            scores = torch.zeros(seq_len, device=raw.device, dtype=raw.dtype)
+            scores[:raw.shape[0]] = raw
+        else:
+            scores = raw[:seq_len]
+        budget = int(seq_len * self.budget)
+        keep = torch.zeros(seq_len, dtype=torch.bool, device=device)
+        keep[:self.sink_size] = True
+        keep[max(0, seq_len - self.obs_window):] = True
+        remaining = budget - keep.sum().item()
+        if remaining > 0:
+            scores_masked = scores.clone()
+            scores_masked[keep] = -float('inf')
+            topk = scores_masked.topk(min(remaining, (~keep).sum().item())).indices
+            keep[topk] = True
+        return keep
+
     def memory_bytes(self, seq_len: int, model_config) -> int:
         num_layers = model_config.num_hidden_layers
         num_kv_heads = getattr(model_config, "num_key_value_heads",

@@ -2,12 +2,12 @@
 
 Strategies tested:
 1. Full KV cache (baseline)
-2. KV2State (streaming heads → recurrent state, retrieval heads → full KV)
-3. KV2State + Adaptive Tiered Cache (streaming → state, retrieval → tiered compression)
+2. StreamingAttention (streaming heads → recurrent state, retrieval heads → full KV)
+3. StreamingAttention + Adaptive Tiered Cache (streaming → state, retrieval → tiered compression)
 4. Uniform quantization baselines (INT8-only, INT4-only)
 
 Usage:
-    python -m kv2state.benchmark_adaptive \
+    python -m streaming_attention.benchmark_adaptive \
         --model meta-llama/Meta-Llama-3.1-8B-Instruct \
         --pattern-dir attn_patterns/Meta-Llama-3.1-8B-Instruct \
         --max-samples 50
@@ -23,8 +23,8 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
-from kv2state.importance import ImportanceConfig, ImportanceScorer
-from kv2state.adaptive_cache import (
+from streaming_attention.importance import ImportanceConfig, ImportanceScorer
+from streaming_attention.adaptive_cache import (
     AdaptiveCacheConfig,
     TieredKVCache,
     _symmetric_quantize,

@@ -1,4 +1,4 @@
-"""KV2State strategy: streaming heads → recurrent state, retrieval heads → full KV."""
+"""Streaming attention strategy: streaming heads → recurrent state, retrieval heads → full KV."""
 
 import logging
 from typing import Optional
@@ -10,10 +10,10 @@ from kv_bench.strategy import KVCacheStrategy
 logger = logging.getLogger(__name__)
 
 
-class KV2StateStrategy(KVCacheStrategy):
-    """Wraps the kv2state package's hybrid attention patching."""
+class StreamingAttentionStrategy(KVCacheStrategy):
+    """Wraps the streaming_attention package's hybrid attention patching."""
 
-    name = "KV2State"
+    name = "StreamingAttention"
 
     def __init__(
         self,
@@ -30,31 +30,30 @@ class KV2StateStrategy(KVCacheStrategy):
         self._head_classification = None
 
     def setup(self, model: nn.Module, model_config, device_config) -> nn.Module:
-        from kv2state.head_classifier import load_duo_attention_patterns
-        from kv2state.hybrid_attention import patch_model_for_kv2state, KV2StateConfig
+        from streaming_attention.head_classifier import load_duo_attention_patterns
+        from streaming_attention.hybrid_attention import patch_model_for_streaming_attention, StreamingAttentionConfig
 
         if self.pattern_dir is None:
             raise ValueError(
-                "KV2StateStrategy requires pattern_dir pointing to DuoAttention patterns"
+                "StreamingAttentionStrategy requires pattern_dir pointing to DuoAttention patterns"
             )
 
         self._head_classification = load_duo_attention_patterns(
             self.pattern_dir, threshold=self.threshold
         )
 
-        config = KV2StateConfig(decay_init=self.decay_init)
-        model, self._state_cache = patch_model_for_kv2state(
+        config = StreamingAttentionConfig(decay_init=self.decay_init)
+        model, self._state_cache = patch_model_for_streaming_attention(
             model, self._head_classification, config
         )
 
         # Load calibrated weights if available
         if self.checkpoint_path:
             logger.info(f"Loading calibrated state from {self.checkpoint_path}")
-            from kv2state.state_attention import DecayedLinearState
-            if hasattr(model, '_kv2state_modules'):
+            if hasattr(model, '_streaming_attention_modules'):
                 import torch
                 state_dict = torch.load(self.checkpoint_path, map_location="cpu")
-                model._kv2state_modules.load_state_dict(state_dict, strict=False)
+                model._streaming_attention_modules.load_state_dict(state_dict, strict=False)
 
         return model
 
@@ -91,14 +90,14 @@ class KV2StateStrategy(KVCacheStrategy):
             if hasattr(attn, '_original_forward'):
                 attn.forward = attn._original_forward
                 del attn._original_forward
-                if hasattr(attn, '_kv2state_patched'):
-                    del attn._kv2state_patched
+                if hasattr(attn, '_streaming_attention_patched'):
+                    del attn._streaming_attention_patched
 
         # Clean up stored modules
-        if hasattr(model, '_kv2state_modules'):
-            del model._kv2state_modules
-        if hasattr(model, '_kv2state_cache'):
-            del model._kv2state_cache
+        if hasattr(model, '_streaming_attention_modules'):
+            del model._streaming_attention_modules
+        if hasattr(model, '_streaming_attention_cache'):
+            del model._streaming_attention_cache
 
         self._state_cache = None
         return model

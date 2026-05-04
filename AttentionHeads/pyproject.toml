@@ -1,0 +1,39 @@
+[project]
+name = "mha-transformer"
+version = "1.0.0"
+description = "MHA/MQA/GQA/MLA transformer variants for small-scale attention research"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0,<2.3.0",
+    "transformers>=4.30.0,<5.0",
+    "datasets>=2.12.0",
+    "numpy>=1.24.0,<2.0",
+    "tqdm>=4.65.0",
+    "tensorboard>=2.13.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
+
+[project.optional-dependencies]
+notebook = ["jupyter", "ipython", "notebook"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "AttentionHeads",
+    "AttentionHeads.mha",
+    "AttentionHeads.mqa",
+    "AttentionHeads.gqa",
+    "AttentionHeads.mla",
+]
+
+[tool.setuptools.package-dir]
+"AttentionHeads" = "."
+"AttentionHeads.mha" = "mha"
+"AttentionHeads.mqa" = "mqa"
+"AttentionHeads.gqa" = "gqa"
+"AttentionHeads.mla" = "mla"

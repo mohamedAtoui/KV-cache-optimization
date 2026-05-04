@@ -13,27 +13,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from kv2state.head_classifier import HeadClassification
-from kv2state.state_attention import DecayedLinearState, StateCache
+from streaming_attention.head_classifier import HeadClassification
+from streaming_attention.state_attention import DecayedLinearState, StateCache
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class KV2StateConfig:
-    """Configuration for KV2State hybrid attention."""
+class StreamingAttentionConfig:
+    """Configuration for streaming hybrid attention."""
     decay_init: float = 0.99
     learnable_decay: bool = False  # False for zero-shot, True for calibration
     chunk_size: int = 64  # Chunk size for parallel prefill of state heads
     skip_feature_map: bool = False  # True for calibration: pass raw Q/K, only apply decay
 
 
-def patch_model_for_kv2state(
+def patch_model_for_streaming_attention(
     model: nn.Module,
     head_classification: HeadClassification,
-    config: Optional[KV2StateConfig] = None,
+    config: Optional[StreamingAttentionConfig] = None,
 ) -> tuple[nn.Module, StateCache]:
-    """Monkey-patch a Llama model to use KV2State hybrid attention.
+    """Monkey-patch a Llama model to use streaming hybrid attention.
 
     Replaces the forward method of each LlamaAttention layer to:
     - Use standard softmax attention + KV cache for retrieval heads
@@ -42,14 +42,14 @@ def patch_model_for_kv2state(
     Args:
         model: HuggingFace LlamaForCausalLM (or compatible).
         head_classification: Binary mask from head_classifier.
-        config: KV2State configuration. Uses defaults if None.
+        config: StreamingAttentionConfig. Uses defaults if None.
 
     Returns:
         model: The patched model (modified in-place).
         state_cache: StateCache object to manage recurrent states.
     """
     if config is None:
-        config = KV2StateConfig()
+        config = StreamingAttentionConfig()
 
     state_cache = StateCache()
     mask = head_classification.mask  # [num_layers, num_kv_heads]
@@ -116,10 +116,10 @@ def patch_model_for_kv2state(
         )
 
     # Store state modules on model so they're included in parameters()
-    model._kv2state_modules = nn.ModuleDict({
+    model._streaming_attn_modules = nn.ModuleDict({
         f"layer{l}_head{h}": mod for (l, h), mod in state_modules.items()
     })
-    model._kv2state_cache = state_cache
+    model._streaming_attn_cache = state_cache
 
     streaming_heads = head_classification.get_streaming_heads()
     logger.info(
@@ -303,7 +303,7 @@ def _patch_attention_layer(
 
     # Replace forward method
     attn.forward = hybrid_forward
-    attn._kv2state_patched = True
+    attn._streaming_attn_patched = True
 
 
 def _apply_rotary_pos_emb(q, k, cos, sin):
