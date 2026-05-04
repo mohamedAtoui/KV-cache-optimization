@@ -1,0 +1,53 @@
+{
+    "model_name": "meta-llama/Llama-3.1-8B-Instruct",
+    "num_layers": 32,
+    "num_attention_heads": 32,
+    "num_kv_heads": 8,
+    "head_dim": 128,
+    "hidden_size": 4096,
+    "duo_attention_pattern_dir": "duo-attention/attn_patterns/Meta-Llama-3.1-8B-Instruct",
+    "state_config": {
+        "decay_init": 0.99,
+        "learnable_decay": false,
+        "chunk_size": 64
+    },
+    "eval_config": {
+        "dataset": "wikitext",
+        "dataset_config": "wikitext-2-raw-v1",
+        "max_length": 2048,
+        "stride": 512
+    },
+    "calibration": {
+        "stage1": {
+            "description": "Per-head MSE alignment — learn decay per streaming head",
+            "lr": 0.02,
+            "steps": 500,
+            "batch_size": 2,
+            "seq_len": 128,
+            "warmup_steps": 50,
+            "dataset": "DKYoon/SlimPajama-6B",
+            "dataset_subset": "train",
+            "log_interval": 50
+        },
+        "stage2": {
+            "description": "End-to-end LoRA fine-tuning with cross-entropy loss",
+            "lr": 2e-4,
+            "steps": 2000,
+            "batch_size": 2,
+            "seq_len": 256,
+            "warmup_steps": 100,
+            "lora_rank": 16,
+            "lora_alpha": 32,
+            "lora_target_modules": ["q_proj", "v_proj"],
+            "dataset": "DKYoon/SlimPajama-6B",
+            "dataset_subset": "train",
+            "log_interval": 100
+        }
+    },
+    "notes": {
+        "gqa_ratio": "4 query heads per KV head (32 Q / 8 KV)",
+        "expected_baseline_ppl": "6-7 on WikiText-2",
+        "duo_attention_streaming_fraction": "~50% of KV heads are streaming (Llama-3 GQA)",
+        "go_nogo_threshold": "zero-shot ppl < 3x baseline = GO, > 10x = STOP"
+    }
+}

@@ -1,0 +1,25 @@
+[project]
+name = "streaming_attention"
+version = "0.3.0"
+description = "Per-Head KV Cache to Recurrent Streaming State for LLMs"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0,<2.3.0",
+    "transformers>=4.40.0,<5.0",
+    "datasets>=2.16.0",
+    "tqdm>=4.60.0",
+    "numpy>=1.24.0,<2.0",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7.0"]
+fla = ["flash-linear-attention>=0.1.0"]
+train = ["peft>=0.10.0", "accelerate>=0.28.0"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["streaming_attention"]
+package-dir = {"streaming_attention" = "."}
