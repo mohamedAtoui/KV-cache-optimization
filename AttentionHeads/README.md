@@ -34,7 +34,7 @@ A clean PyTorch implementation of a **GPT-style decoder-only transformer** compa
 ```bash
 git clone <your-repo-url>
 cd AttentionHeads
-pip install -r requirements.txt
+pip install -e ..            # installs the uv workspace from the repo root
 pip install -e .
 ```
 
@@ -168,7 +168,7 @@ AttentionHeads/
 ├── ARCHITECTURE.md
 ├── TRAINING_RESULTS.md
 ├── README.md                     # This file
-├── requirements.txt
+├── config.json           Model/training configuration
 └── setup.py
 ```
 
@@ -187,7 +187,7 @@ AttentionHeads/
 - PyTorch 2.0+ (with BFloat16 support)
 - Transformers (for GPT-2 tokenizer)
 - Datasets (for HuggingFace datasets)
-- See `requirements.txt` for full list
+- See the root `pyproject.toml` for the full dependency list
 
 ## References
 

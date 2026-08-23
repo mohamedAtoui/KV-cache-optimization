@@ -1,8 +1,51 @@
 # KV Cache Optimization
 
-Research project exploring KV cache compression strategies for large language models. Starting from a comparison of attention mechanisms (MHA, MQA, GQA, MLA) on toy models, this project develops and benchmarks production-scale techniques — including streaming recurrent state conversion and multi-tier adaptive compression — targeting Llama-3.1-8B-Instruct.
+Making the KV cache smaller without making the model worse. The headline result:
+**a 2.2x smaller KV cache for +0.04 perplexity** on Llama-3.2-1B-Instruct.
 
-## Project Structure
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/headline-dark.png">
+  <img alt="Perplexity added versus KV cache compression. Stratigraphic sits at +0.04 PPL and 2.2x; H2O costs +96.57 PPL at the same compression." src="docs/assets/headline-light.png">
+</picture>
+
+| Strategy | Perplexity | ΔPPL | Compression |
+|----------|-----------|------|-------------|
+| FullKV (baseline) | 11.15 | — | 1.0x |
+| **Stratigraphic** | **11.18** | **+0.04** | **2.2x** |
+| INT8-all | 11.15 | +0.00 | 1.9x |
+| INT4-all | 13.37 | +2.22 | 3.6x |
+| SnapKV (50%) | 17.94 | +6.79 | 2.0x |
+| H2O (50%) | 107.72 | +96.57 | 2.0x |
+
+<sub>Llama-3.2-1B-Instruct, WikiText-2, A100. Recorded in
+<a href="docs/DIARY.md">docs/DIARY.md</a> (Day 20) and reproducible with
+<a href="streaming_attention/notebooks/03-kv-bench-modal.ipynb">03-kv-bench-modal.ipynb</a>.
+Regenerate the chart with <code>uv run --with matplotlib python docs/make_headline_chart.py</code>.</sub>
+
+The interesting part is not that compression works — it is *how differently* the
+strategies fail. H2O and SnapKV compress by the same 2x and cost 96.57 and 6.79
+perplexity respectively; Stratigraphic compresses more and costs 0.04. Deciding
+which tokens to keep matters far more than how many.
+
+**Stratigraphic** borrows from geology. Each KV head gets its own compression
+profile, and tokens are "deposited" into zones they can only ever sink through —
+FP16 → INT8 → INT4 → evict, never back up, so re-compression error cannot
+compound. High-attention tokens are pinned at FP16 as anchors, and the layer
+budget is inverted: early layers compress hardest, late layers keep the most
+precision.
+
+One debugging note worth recording, because it is the kind of bug that quietly
+invalidates a benchmark: key quantisation was originally hooked at `k_proj`,
+before RoPE, where it never reached the cache the model actually reads. INT4
+scored a suspicious +0.00. Moving the hook into the `self_attn.forward` wrapper,
+after RoPE, made INT4 report its real +2.22 — the "improvement" had been a
+measurement artefact all along.
+
+## What is in here
+
+Three sub-projects, in the order they were built:
+
+### Layout
 
 ```
 KV-cache-optimization/
@@ -61,16 +104,18 @@ python -m kv_bench \
   --output results.json -v
 ```
 
-## Key Results
+## Attention mechanism comparison
 
-| Strategy | Perplexity | Memory vs Baseline |
-|----------|------------|-------------------|
-| FullKV (baseline) | 7.96 | 1.00x |
-| H2O (50%) | 8.31 | 0.50x |
-| SnapKV (50%) | 8.15 | 0.50x |
-| INT8 | 7.97 | 0.50x |
-| INT4 | 8.42 | 0.25x |
-| Stratigraphic | 8.05 | 0.38x |
+Before the KV work, four ~16M-parameter decoder-only transformers that differ
+only in their attention: MHA, MQA, GQA-4 and MLA, trained on TinyStories and
+SimpleStories.
+
+![MHA vs MQA vs GQA vs MLA: perplexity, top-1 accuracy, KV cache size, inference speed, peak memory, and the efficiency-quality tradeoff](AttentionHeads/results/summary_figure.png)
+
+MQA cuts the KV cache from 512 to 64 values per token per layer; MLA lands at 144
+with the best perplexity of the four. Full plots in
+[`AttentionHeads/results/`](AttentionHeads/results/), evaluation numbers in
+`AttentionHeads/evaluation/evaluation_results.zip`.
 
 ## References
 
